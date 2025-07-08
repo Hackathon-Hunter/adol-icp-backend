@@ -1,7 +1,7 @@
 {
   "canisters": {
-    "plantify-icp-backend-backend": {
-      "main": "src/plantify-icp-backend-backend/main.mo",
+    "plantify-icp-backend": {
+      "main": "src/backend/main.mo",
       "type": "motoko"
     }
   },
