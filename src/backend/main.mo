@@ -1,12 +1,15 @@
-// src/plantify_backend/main.mo
-
 import Result "mo:base/Result";
 import Principal "mo:base/Principal";
 import Array "mo:base/Array";
+import Float "mo:base/Float";
 
 import FarmerTypes "types/FarmerTypes";
 import FarmerStorage "storage/FarmerStorage";
 import FarmerService "services/FarmerService";
+
+import InvestorTypes "types/InvestorTypes";
+import InvestorStorage "storage/InvestorStorage";
+import InvestorService "services/InvestorService";
 
 import InvestmentTypes "types/InvestmentTypes";
 import InvestmentStorage "storage/InvestmentStorage";
@@ -22,6 +25,11 @@ actor PlantifyBackend {
   private stable var farmersStable : [(FarmerTypes.FarmerId, FarmerTypes.FarmerProfile)] = [];
   private stable var emailToFarmerStable : [(Text, FarmerTypes.FarmerId)] = [];
   private stable var governmentIdToFarmerStable : [(Text, FarmerTypes.FarmerId)] = [];
+
+  // Stable storage for upgrades - Investor data
+  private stable var investorsStable : [(InvestorTypes.InvestorId, InvestorTypes.InvestorProfile)] = [];
+  private stable var emailToInvestorStable : [(Text, InvestorTypes.InvestorId)] = [];
+  private stable var investorInvestmentsStable : [(InvestorTypes.InvestorId, [InvestorTypes.InvestorInvestment])] = [];
 
   // Stable storage for upgrades - Investment data
   private stable var investmentsStable : [(InvestmentTypes.InvestmentId, InvestmentTypes.InvestmentProject)] = [];
@@ -39,10 +47,12 @@ actor PlantifyBackend {
 
   // Initialize storage and services
   private let farmerStorage = FarmerStorage.FarmerStorage();
+  private let investorStorage = InvestorStorage.InvestorStorage();
   private let investmentStorage = InvestmentStorage.InvestmentStorage();
   private let nftStorage = ICRC7Storage.ICRC7Storage();
 
   private let farmerService = FarmerService.FarmerService(farmerStorage);
+  private let investorService = InvestorService.InvestorService(investorStorage);
   private let investmentService = InvestmentService.InvestmentService(investmentStorage, farmerStorage);
   private let nftService = ICRC7Service.ICRC7Service(nftStorage);
 
@@ -52,6 +62,11 @@ actor PlantifyBackend {
     farmersStable := farmerStorage.getEntries();
     emailToFarmerStable := farmerStorage.getEmailEntries();
     governmentIdToFarmerStable := farmerStorage.getGovernmentIdEntries();
+
+    // Investor data
+    investorsStable := investorStorage.getEntries();
+    emailToInvestorStable := investorStorage.getEmailEntries();
+    investorInvestmentsStable := investorStorage.getInvestmentEntries();
 
     // Investment data
     investmentsStable := investmentStorage.getInvestmentEntries();
@@ -74,6 +89,12 @@ actor PlantifyBackend {
     farmersStable := [];
     emailToFarmerStable := [];
     governmentIdToFarmerStable := [];
+
+    // Restore investor data
+    investorStorage.initFromStable(investorsStable, emailToInvestorStable, investorInvestmentsStable);
+    investorsStable := [];
+    emailToInvestorStable := [];
+    investorInvestmentsStable := [];
 
     // Restore investment data
     investmentStorage.initFromStable(investmentsStable, farmerInvestmentsStable, verificationTrackersStable);
@@ -130,6 +151,53 @@ actor PlantifyBackend {
   // Check if farmer is verified
   public query func isFarmerVerified(farmerId : FarmerTypes.FarmerId) : async Bool {
     farmerService.isFarmerVerified(farmerId);
+  };
+
+  // ========== INVESTOR REGISTRATION FUNCTIONS ==========
+
+  // Register a new investor
+  public shared (msg) func registerInvestor(
+    request : InvestorTypes.RegisterInvestorRequest
+  ) : async InvestorTypes.InvestorRegistrationResult {
+    investorService.registerInvestor(msg.caller, request);
+  };
+
+  // Get investor profile by ID
+  public query func getInvestorProfile(investorId : InvestorTypes.InvestorId) : async ?InvestorTypes.InvestorProfile {
+    investorStorage.getInvestor(investorId);
+  };
+
+  // Get your own investor profile
+  public shared query (msg) func getMyInvestorProfile() : async ?InvestorTypes.InvestorProfile {
+    investorStorage.getInvestor(msg.caller);
+  };
+
+  // Update investor profile
+  public shared (msg) func updateInvestorProfile(
+    fullName : ?Text,
+    email : ?Text,
+  ) : async Result.Result<(), Text> {
+    investorService.updateInvestorProfile(msg.caller, fullName, email);
+  };
+
+  // Get investor portfolio
+  public shared query (msg) func getMyPortfolio() : async ?InvestorTypes.InvestorPortfolio {
+    investorService.getInvestorPortfolio(msg.caller);
+  };
+
+  // Get investor portfolio by ID
+  public query func getInvestorPortfolio(investorId : InvestorTypes.InvestorId) : async ?InvestorTypes.InvestorPortfolio {
+    investorService.getInvestorPortfolio(investorId);
+  };
+
+  // Check if investor is active
+  public query func isActiveInvestor(investorId : InvestorTypes.InvestorId) : async Bool {
+    investorService.isActiveInvestor(investorId);
+  };
+
+  // Get top investors
+  public query func getTopInvestors(limit : Nat) : async [InvestorTypes.InvestorProfile] {
+    investorService.getTopInvestors(limit);
   };
 
   // ========== INVESTMENT SETUP FUNCTIONS ==========
@@ -334,6 +402,83 @@ actor PlantifyBackend {
     [#Err(#GenericError({ error_code = 501; message = "Approval not fully implemented in this demo" }))];
   };
 
+  // ========== ENHANCED NFT PURCHASE FUNCTIONS ==========
+
+  // Purchase NFT from available supply (enhanced with investor tracking)
+  public shared (msg) func purchaseNFT(
+    request : ICRC7Types.PurchaseNFTRequest
+  ) : async ICRC7Types.PurchaseNFTResult {
+
+    // Check if caller is a registered investor
+    if (not investorService.isActiveInvestor(msg.caller)) {
+      return #Error("You must be a registered investor to purchase NFTs. Please register as an investor first.");
+    };
+
+    // Process the NFT purchase
+    let purchaseResult = nftService.purchaseNFT(msg.caller, request);
+
+    // If purchase is successful, record the investment for the investor
+    switch (purchaseResult) {
+      case (#Success(details)) {
+        // Record the investment in investor's portfolio
+        let recordResult = investorService.recordInvestment(
+          msg.caller,
+          request.investmentId,
+          details.tokenIds,
+          details.totalPaid,
+        );
+
+        // If recording fails, log but don't fail the purchase
+        switch (recordResult) {
+          case (#err(error)) {
+            // Log error but return successful purchase
+            // In production, you might want to implement compensation logic
+          };
+          case (#ok()) {
+            // Successfully recorded investment
+          };
+        };
+
+        purchaseResult;
+      };
+      case (other) { other };
+    };
+  };
+
+  // Get NFT collection information
+  public query func getNFTCollection(
+    investmentId : Nat
+  ) : async ?ICRC7Types.NFTCollection {
+    nftService.getNFTCollection(investmentId);
+  };
+
+  // Get all NFT collections
+  public query func getAllNFTCollections() : async [ICRC7Types.NFTCollection] {
+    nftService.getAllNFTCollections();
+  };
+
+  // Get pricing information for an investment
+  public query func getPricingInfo(
+    investmentId : Nat
+  ) : async ?{
+    nftPrice : Nat;
+    totalSupply : Nat;
+    availableSupply : Nat;
+    soldSupply : Nat;
+    fundingRequired : Nat;
+    priceInICP : Float;
+  } {
+    nftService.getPricingInfo(investmentId);
+  };
+
+  // Calculate NFT price for investment
+  public query func calculateNFTPrice(
+    fundingRequiredUSD : Nat,
+    totalSupply : Nat,
+  ) : async Nat {
+    nftService.calculateNFTPrice(fundingRequiredUSD, totalSupply);
+  };
+
   // ========== ADMIN FUNCTIONS ==========
 
   // Update farmer verification status (admin only)
@@ -347,6 +492,19 @@ actor PlantifyBackend {
     // };
 
     farmerService.updateVerificationStatus(farmerId, newStatus);
+  };
+
+  // Update investor status (admin only)
+  public shared (msg) func updateInvestorStatus(
+    investorId : InvestorTypes.InvestorId,
+    newStatus : InvestorTypes.InvestorStatus,
+  ) : async Result.Result<(), Text> {
+    // TODO: Add admin check
+    // if (not isAdmin(msg.caller)) {
+    //     return #err("Unauthorized: Only admins can update investor status");
+    // };
+
+    investorService.updateInvestorStatus(investorId, newStatus);
   };
 
   // Update investment project status (admin only)
@@ -410,47 +568,6 @@ actor PlantifyBackend {
     };
   };
 
-  // Purchase NFT from available supply
-  public shared (msg) func purchaseNFT(
-    request : ICRC7Types.PurchaseNFTRequest
-  ) : async ICRC7Types.PurchaseNFTResult {
-    nftService.purchaseNFT(msg.caller, request);
-  };
-
-  // Get NFT collection information
-  public query func getNFTCollection(
-    investmentId : Nat
-  ) : async ?ICRC7Types.NFTCollection {
-    nftService.getNFTCollection(investmentId);
-  };
-
-  // Get all NFT collections
-  public query func getAllNFTCollections() : async [ICRC7Types.NFTCollection] {
-    nftService.getAllNFTCollections();
-  };
-
-  // Get pricing information for an investment
-  public query func getPricingInfo(
-    investmentId : Nat
-  ) : async ?{
-    nftPrice : Nat;
-    totalSupply : Nat;
-    availableSupply : Nat;
-    soldSupply : Nat;
-    fundingRequired : Nat;
-    priceInICP : Float;
-  } {
-    nftService.getPricingInfo(investmentId);
-  };
-
-  // Calculate NFT price for investment
-  public query func calculateNFTPrice(
-    fundingRequiredUSD : Nat,
-    totalSupply : Nat,
-  ) : async Nat {
-    nftService.calculateNFTPrice(fundingRequiredUSD, totalSupply);
-  };
-
   // Update NFT metadata (admin only)
   public shared (msg) func updateNFTMetadata(
     tokenId : ICRC7Types.TokenId,
@@ -465,10 +582,30 @@ actor PlantifyBackend {
     nftService.updateNFTMetadata(msg.caller, tokenId, imageUrl, projectStatus);
   };
 
+  // Update investment value for portfolio tracking (admin only)
+  public shared (msg) func updateInvestmentValue(
+    investorId : InvestorTypes.InvestorId,
+    investmentId : Nat,
+    newValue : Nat,
+  ) : async Result.Result<(), Text> {
+    // TODO: Add admin check
+    // if (not isAdmin(msg.caller)) {
+    //     return #err("Unauthorized: Only admins can update investment values");
+    // };
+
+    investorService.updateInvestmentValue(investorId, investmentId, newValue);
+  };
+
   // Get all farmers (admin only)
   public query func getAllFarmers() : async [FarmerTypes.FarmerProfile] {
     // TODO: Add admin check
     farmerStorage.getAllFarmers();
+  };
+
+  // Get all investors (admin only)
+  public query func getAllInvestors() : async [InvestorTypes.InvestorProfile] {
+    // TODO: Add admin check
+    investorStorage.getAllInvestors();
   };
 
   // Get all investment projects (admin only)
@@ -488,26 +625,38 @@ actor PlantifyBackend {
     farmerService.getFarmersByStatus(status);
   };
 
+  // Get investors by status
+  public query func getInvestorsByStatus(status : InvestorTypes.InvestorStatus) : async [InvestorTypes.InvestorProfile] {
+    investorService.getInvestorsByStatus(status);
+  };
+
   // Get farmer registration statistics
   public query func getFarmerRegistrationStats() : async FarmerTypes.FarmerStats {
     farmerService.getFarmerStats();
+  };
+
+  // Get investor registration statistics
+  public query func getInvestorRegistrationStats() : async InvestorTypes.InvestorStats {
+    investorService.getInvestorStats();
   };
 
   // ========== UTILITY FUNCTIONS ==========
 
   // Health check
   public query func healthCheck() : async Text {
-    "Plantify Backend is healthy! 🌱 Farmers, Investment Projects, and NFTs ready!";
+    "Plantify Backend is healthy! 🌱 Farmers, Investors, Investment Projects, and NFTs ready!";
   };
 
   // Get platform overview
   public query func getPlatformOverview() : async {
     farmers : FarmerTypes.FarmerStats;
+    investors : InvestorTypes.InvestorStats;
     investments : InvestmentTypes.InvestmentStats;
     nfts : { totalSupply : Nat; totalCollections : Nat };
   } {
     {
       farmers = farmerService.getFarmerStats();
+      investors = investorService.getInvestorStats();
       investments = investmentService.getInvestmentStats();
       nfts = {
         totalSupply = nftService.totalSupply();
@@ -535,6 +684,341 @@ actor PlantifyBackend {
       averagePrice = if (collections.size() > 0) {
         totalPrices / collections.size();
       } else { 0 };
+    };
+  };
+
+  // Get platform metrics dashboard
+  public query func getPlatformMetrics() : async {
+    totalUsers : Nat;
+    totalFarmers : Nat;
+    totalInvestors : Nat;
+    totalInvestmentProjects : Nat;
+    totalInvestmentVolume : Nat;
+    averageInvestmentSize : Nat;
+    platformGrowthRate : Float;
+  } {
+    let farmerStats = farmerService.getFarmerStats();
+    let investorStats = investorService.getInvestorStats();
+    let investmentStats = investmentService.getInvestmentStats();
+
+    {
+      totalUsers = farmerStats.totalFarmers + investorStats.totalInvestors;
+      totalFarmers = farmerStats.totalFarmers;
+      totalInvestors = investorStats.totalInvestors;
+      totalInvestmentProjects = investmentStats.totalProjects;
+      totalInvestmentVolume = investorStats.totalInvestmentVolume;
+      averageInvestmentSize = investorStats.averageInvestmentAmount;
+      platformGrowthRate = 0.0; // TODO: Implement growth rate calculation
+    };
+  };
+
+  // Check user registration status
+  public shared query (msg) func getMyRegistrationStatus() : async {
+    isFarmer : Bool;
+    isInvestor : Bool;
+    farmerStatus : ?FarmerTypes.VerificationStatus;
+    investorStatus : ?InvestorTypes.InvestorStatus;
+  } {
+    let farmerProfile = farmerStorage.getFarmer(msg.caller);
+    let investorProfile = investorStorage.getInvestor(msg.caller);
+
+    {
+      isFarmer = farmerProfile != null;
+      isInvestor = investorProfile != null;
+      farmerStatus = switch (farmerProfile) {
+        case (?farmer) { ?farmer.verificationStatus };
+        case null { null };
+      };
+      investorStatus = switch (investorProfile) {
+        case (?investor) { ?investor.status };
+        case null { null };
+      };
+    };
+  };
+
+  // Get marketplace overview for investors
+  public query func getMarketplaceOverview() : async {
+    activeProjects : Nat;
+    totalInvestmentOpportunities : Nat;
+    averageROI : Float;
+    totalFundingAvailable : Nat;
+    topPerformingCrops : [Text];
+  } {
+    let activeProjects = investmentService.getInvestmentsByStatus(#Active);
+    let approvedProjects = investmentService.getInvestmentsByStatus(#Approved);
+    let allCollections = nftService.getAllNFTCollections();
+
+    let totalFundingAvailable = Array.foldLeft<ICRC7Types.NFTCollection, Nat>(
+      allCollections,
+      0,
+      func(acc, collection) {
+        acc + (collection.nftPrice * collection.availableSupply);
+      },
+    );
+
+    {
+      activeProjects = activeProjects.size();
+      totalInvestmentOpportunities = approvedProjects.size();
+      averageROI = 18.5; // TODO: Calculate from real data
+      totalFundingAvailable = totalFundingAvailable;
+      topPerformingCrops = ["Rice", "Coffee", "Apple"]; // TODO: Calculate from real data
+    };
+  };
+
+  // Get user dashboard data
+  public shared query (msg) func getMyDashboardData() : async {
+    userType : Text;
+    farmerData : ?{
+      totalProjects : Nat;
+      activeProjects : Nat;
+      totalFundingRaised : Nat;
+      verificationStatus : FarmerTypes.VerificationStatus;
+    };
+    investorData : ?{
+      totalInvestments : Nat;
+      portfolioValue : Nat;
+      totalReturns : Nat;
+      roiPercentage : Float;
+    };
+  } {
+    let farmerProfile = farmerStorage.getFarmer(msg.caller);
+    let investorProfile = investorStorage.getInvestor(msg.caller);
+
+    let userType = if (farmerProfile != null and investorProfile != null) {
+      "Both";
+    } else if (farmerProfile != null) {
+      "Farmer";
+    } else if (investorProfile != null) {
+      "Investor";
+    } else {
+      "Unregistered";
+    };
+
+    let farmerData = switch (farmerProfile) {
+      case (?farmer) {
+        let myProjects = investmentService.getInvestmentsByFarmer(msg.caller);
+        let activeProjects = Array.filter(
+          myProjects,
+          func(project : InvestmentTypes.InvestmentProject) : Bool {
+            project.status == #Active;
+          },
+        );
+
+        let totalFunding = Array.foldLeft<InvestmentTypes.InvestmentProject, Nat>(
+          myProjects,
+          0,
+          func(acc, project) { acc + project.farmInfo.fundingRequired },
+        );
+
+        ?{
+          totalProjects = myProjects.size();
+          activeProjects = activeProjects.size();
+          totalFundingRaised = totalFunding;
+          verificationStatus = farmer.verificationStatus;
+        };
+      };
+      case null { null };
+    };
+
+    let investorData = switch (investorService.getInvestorPortfolio(msg.caller)) {
+      case (?portfolio) {
+        ?{
+          totalInvestments = portfolio.investments.size();
+          portfolioValue = portfolio.totalValue;
+          totalReturns = portfolio.totalReturns;
+          roiPercentage = portfolio.roiPercentage;
+        };
+      };
+      case null { null };
+    };
+
+    {
+      userType = userType;
+      farmerData = farmerData;
+      investorData = investorData;
+    };
+  };
+
+  // Get investment opportunities for investors
+  public query func getInvestmentOpportunities() : async [InvestmentTypes.InvestmentProject] {
+    investmentService.getInvestmentsByStatus(#Approved);
+  };
+
+  // Get recent investments activity
+  public query func getRecentInvestmentActivity(limit : Nat) : async [InvestmentTypes.InvestmentProject] {
+    investmentService.getRecentInvestments(limit);
+  };
+
+  // Bulk investor registration status check
+  public query func checkInvestorRegistration(principalIds : [Principal]) : async [(Principal, Bool)] {
+    Array.map<Principal, (Principal, Bool)>(
+      principalIds,
+      func(id) { (id, investorService.isActiveInvestor(id)) },
+    );
+  };
+
+  // Get investment project summary for marketplace
+  public query func getInvestmentProjectSummary(investmentId : InvestmentTypes.InvestmentId) : async ?{
+    project : InvestmentTypes.InvestmentProject;
+    nftCollection : ?ICRC7Types.NFTCollection;
+    pricing : ?{
+      nftPrice : Nat;
+      totalSupply : Nat;
+      availableSupply : Nat;
+      soldSupply : Nat;
+      fundingRequired : Nat;
+      priceInICP : Float;
+    };
+  } {
+    switch (investmentStorage.getInvestment(investmentId)) {
+      case null { null };
+      case (?project) {
+        let collection = nftService.getNFTCollection(investmentId);
+        let pricing = nftService.getPricingInfo(investmentId);
+
+        ?{
+          project = project;
+          nftCollection = collection;
+          pricing = pricing;
+        };
+      };
+    };
+  };
+
+  // Enhanced portfolio tracking
+  public shared query (msg) func getDetailedPortfolio() : async ?{
+    investor : InvestorTypes.InvestorProfile;
+    investments : [{
+      investment : InvestorTypes.InvestorInvestment;
+      project : ?InvestmentTypes.InvestmentProject;
+      nftTokens : [ICRC7Types.TokenId];
+      currentMarketValue : Nat;
+      roiPercentage : Float;
+    }];
+    summary : {
+      totalValue : Nat;
+      totalReturns : Nat;
+      overallROI : Float;
+      bestPerforming : ?Nat;
+      worstPerforming : ?Nat;
+    };
+  } {
+    switch (investorStorage.getInvestor(msg.caller)) {
+      case null { null };
+      case (?investor) {
+        let investments = investorStorage.getInvestorInvestments(msg.caller);
+
+        let detailedInvestments = Array.map<InvestorTypes.InvestorInvestment, { investment : InvestorTypes.InvestorInvestment; project : ?InvestmentTypes.InvestmentProject; nftTokens : [ICRC7Types.TokenId]; currentMarketValue : Nat; roiPercentage : Float }>(
+          investments,
+          func(inv) {
+            let project = investmentStorage.getInvestment(inv.investmentId);
+            let nftTokens = inv.nftTokenIds;
+            let currentValue = inv.currentValue;
+            let roi = if (inv.investmentAmount > 0) {
+              ((Float.fromInt(currentValue) - Float.fromInt(inv.investmentAmount)) / Float.fromInt(inv.investmentAmount)) * 100.0;
+            } else { 0.0 };
+
+            {
+              investment = inv;
+              project = project;
+              nftTokens = nftTokens;
+              currentMarketValue = currentValue;
+              roiPercentage = roi;
+            };
+          },
+        );
+
+        let totalValue = Array.foldLeft<InvestorTypes.InvestorInvestment, Nat>(
+          investments,
+          0,
+          func(acc, inv) { acc + inv.currentValue },
+        );
+
+        let totalInvested = Array.foldLeft<InvestorTypes.InvestorInvestment, Nat>(
+          investments,
+          0,
+          func(acc, inv) { acc + inv.investmentAmount },
+        );
+
+        let totalReturns = if (totalValue > totalInvested) {
+          totalValue - totalInvested;
+        } else { 0 };
+
+        let overallROI = if (totalInvested > 0) {
+          (Float.fromInt(totalReturns) / Float.fromInt(totalInvested)) * 100.0;
+        } else { 0.0 };
+
+        ?{
+          investor = investor;
+          investments = detailedInvestments;
+          summary = {
+            totalValue = totalValue;
+            totalReturns = totalReturns;
+            overallROI = overallROI;
+            bestPerforming = null; // TODO: Calculate best performing investment
+            worstPerforming = null; // TODO: Calculate worst performing investment
+          };
+        };
+      };
+    };
+  };
+
+  // Get platform statistics for admin dashboard
+  public query func getAdminDashboardStats() : async {
+    users : {
+      farmers : FarmerTypes.FarmerStats;
+      investors : InvestorTypes.InvestorStats;
+    };
+    projects : InvestmentTypes.InvestmentStats;
+    nfts : {
+      totalSupply : Nat;
+      totalCollections : Nat;
+      averagePrice : Nat;
+      totalVolume : Nat;
+    };
+    financial : {
+      totalInvestmentVolume : Nat;
+      platformRevenue : Nat;
+      averageInvestmentSize : Nat;
+    };
+  } {
+    let farmerStats = farmerService.getFarmerStats();
+    let investorStats = investorService.getInvestorStats();
+    let investmentStats = investmentService.getInvestmentStats();
+
+    // Calculate NFT stats inline instead of calling getNFTStats()
+    let collections = nftService.getAllNFTCollections();
+    let totalPrices = Array.foldLeft<ICRC7Types.NFTCollection, Nat>(
+      collections,
+      0,
+      func(acc, collection) { acc + collection.nftPrice },
+    );
+
+    let nftStats = {
+      totalSupply = nftService.totalSupply();
+      totalCollections = collections.size();
+      averagePrice = if (collections.size() > 0) {
+        totalPrices / collections.size();
+      } else { 0 };
+    };
+
+    {
+      users = {
+        farmers = farmerStats;
+        investors = investorStats;
+      };
+      projects = investmentStats;
+      nfts = {
+        totalSupply = nftStats.totalSupply;
+        totalCollections = nftStats.totalCollections;
+        averagePrice = nftStats.averagePrice;
+        totalVolume = investorStats.totalInvestmentVolume;
+      };
+      financial = {
+        totalInvestmentVolume = investorStats.totalInvestmentVolume;
+        platformRevenue = investorStats.totalInvestmentVolume / 10; // Assuming 10% platform fee
+        averageInvestmentSize = investorStats.averageInvestmentAmount;
+      };
     };
   };
 };
