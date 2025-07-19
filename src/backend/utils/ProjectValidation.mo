@@ -1,6 +1,5 @@
 import Text "mo:base/Text";
 import Array "mo:base/Array";
-import Result "mo:base/Result";
 import ProjectTypes "../types/ProjectTypes";
 
 module ProjectValidation {

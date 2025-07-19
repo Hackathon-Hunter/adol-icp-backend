@@ -40,7 +40,7 @@ module ProjectTypes {
         description : Text;
         category : Text; // More specific category within the project type
         location : Text;
-        fundingGoal : Nat; // in USD cents (e.g., 500000 = $5000)
+        fundingGoal : Nat; // in ICP (e.g., 500000 = $5000)
         fundingRaised : Nat; // amount raised so far
         timeline : Text; // e.g., "8 months", "2 years"
         expectedROI : Text; // e.g., "18%", "3x returns"

@@ -66,7 +66,7 @@ actor PlantifyBackend {
     };
 
     // Update founder verification status (admin function)
-    public shared (msg) func updateFounderVerification(founderId : Text, isVerified : Bool) : async FounderUpdateResult {
+    public shared (_msg) func updateFounderVerification(founderId : Text, isVerified : Bool) : async FounderUpdateResult {
         // TODO: Add admin authorization check
         founderManager.updateFounderVerification(founderId, isVerified);
     };
@@ -134,7 +134,7 @@ actor PlantifyBackend {
     };
 
     // Update project status (admin function)
-    public shared (msg) func updateProjectStatus(projectId : Text, newStatus : ProjectStatus) : async ProjectUpdateResult {
+    public shared (_msg) func updateProjectStatus(projectId : Text, newStatus : ProjectStatus) : async ProjectUpdateResult {
         // TODO: Add admin authorization check
         projectManager.updateProjectStatus(projectId, newStatus);
     };
