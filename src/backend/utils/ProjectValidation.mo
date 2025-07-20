@@ -149,7 +149,7 @@ module ProjectValidation {
     };
 
     // Validate project type (always valid since it's an enum)
-    public func validateProjectType(projectType : ProjectType) : ValidationResult {
+    public func validateProjectType(_projectType : ProjectType) : ValidationResult {
         #ok(());
     };
 
