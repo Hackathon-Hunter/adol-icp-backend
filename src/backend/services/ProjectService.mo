@@ -1,5 +1,6 @@
 import Time "mo:base/Time";
 import Principal "mo:base/Principal";
+import Array "mo:base/Array";
 import ProjectTypes "../types/ProjectTypes";
 import ProjectValidation "../utils/ProjectValidation";
 import ProjectStorage "../storage/ProjectStorage";
@@ -13,6 +14,7 @@ module ProjectService {
     type UpdateResult = ProjectTypes.UpdateResult;
     type ProjectStatus = ProjectTypes.ProjectStatus;
     type ProjectType = ProjectTypes.ProjectType;
+    type Industry = ProjectTypes.Industry;
 
     public class ProjectManager() {
 
@@ -27,7 +29,7 @@ module ProjectService {
             storage.postupgrade(entries);
         };
 
-        // Create new project
+        // Create new project with enhanced fields
         public func createProject(
             request : ProjectCreateRequest,
             founderId : Text,
@@ -39,33 +41,71 @@ module ProjectService {
                 case (#ok(())) {};
             };
 
-            // Create new project
+            // Create new project with all enhanced fields
             let projectId = storage.generateProjectId();
             let currentTime = Time.now();
 
             let newProject : Project = {
+                // Basic Information
                 id = projectId;
                 founderId = founderId;
                 founderPrincipal = founderPrincipal;
+
+                // Company Information
+                companyName = request.companyName;
+                companyTagline = request.companyTagline;
+                website = request.website;
+                companyLogo = request.companyLogo;
+
+                // Classification
                 projectType = request.projectType;
-                title = request.title;
-                description = request.description;
-                category = request.category;
+                industry = request.industry;
                 location = request.location;
+
+                // Business Description
+                problem = request.problem;
+                solution = request.solution;
+                marketOpportunity = request.marketOpportunity;
+
+                // Financial Information
                 fundingGoal = request.fundingGoal;
+                companyValuation = request.companyValuation;
+                minimumFunding = request.minimumFunding;
                 fundingRaised = 0; // Start with 0 funding
+                useOfFunds = request.useOfFunds;
+
+                // Progress and Milestones
+                milestones = request.milestones;
+
+                // Team
+                teamMembers = request.teamMembers;
+
+                // Media and Documentation
+                pitchDeckUrl = request.pitchDeckUrl;
+                demoVideoUrl = request.demoVideoUrl;
+                productImages = request.productImages;
+
+                // Project Metadata
+                status = #Draft;
+                tags = request.tags;
                 timeline = request.timeline;
                 expectedROI = request.expectedROI;
                 riskLevel = request.riskLevel;
-                status = #Draft;
-                tags = request.tags;
+
+                // Investment Information
                 minInvestment = request.minInvestment;
                 maxInvestment = request.maxInvestment;
                 investorCount = 0; // Start with 0 investors
+
+                // Timestamps
                 createdAt = currentTime;
                 updatedAt = currentTime;
                 launchDate = null; // Will be set when project goes active
                 targetDate = request.targetDate;
+
+                // Legal and Compliance
+                legalStructure = request.legalStructure;
+                jurisdiction = request.jurisdiction;
             };
 
             // Store project
@@ -74,22 +114,7 @@ module ProjectService {
             #ok(newProject);
         };
 
-        // Get project by ID
-        public func getProject(projectId : Text) : ?Project {
-            storage.getProject(projectId);
-        };
-
-        // Get projects by founder ID
-        public func getProjectsByFounder(founderId : Text) : [Project] {
-            storage.getProjectsByFounder(founderId);
-        };
-
-        // Get projects by founder principal
-        public func getProjectsByFounderPrincipal(principal : Principal) : [Project] {
-            storage.getProjectsByFounderPrincipal(principal);
-        };
-
-        // Update project (only by owner)
+        // Update project with enhanced fields (only by owner)
         public func updateProject(
             projectId : Text,
             request : ProjectUpdateRequest,
@@ -115,28 +140,66 @@ module ProjectService {
                     };
 
                     let updatedProject : Project = {
+                        // Basic Information (unchanged)
                         id = project.id;
                         founderId = project.founderId;
                         founderPrincipal = project.founderPrincipal;
+
+                        // Company Information (updated)
+                        companyName = request.companyName;
+                        companyTagline = request.companyTagline;
+                        website = request.website;
+                        companyLogo = request.companyLogo;
+
+                        // Classification (updated)
                         projectType = request.projectType;
-                        title = request.title;
-                        description = request.description;
-                        category = request.category;
+                        industry = request.industry;
                         location = request.location;
+
+                        // Business Description (updated)
+                        problem = request.problem;
+                        solution = request.solution;
+                        marketOpportunity = request.marketOpportunity;
+
+                        // Financial Information (updated)
                         fundingGoal = request.fundingGoal;
+                        companyValuation = request.companyValuation;
+                        minimumFunding = request.minimumFunding;
                         fundingRaised = project.fundingRaised; // Keep existing funding
+                        useOfFunds = request.useOfFunds;
+
+                        // Progress and Milestones (updated)
+                        milestones = request.milestones;
+
+                        // Team (updated)
+                        teamMembers = request.teamMembers;
+
+                        // Media and Documentation (updated)
+                        pitchDeckUrl = request.pitchDeckUrl;
+                        demoVideoUrl = request.demoVideoUrl;
+                        productImages = request.productImages;
+
+                        // Project Metadata (updated)
+                        status = project.status; // Keep existing status
+                        tags = request.tags;
                         timeline = request.timeline;
                         expectedROI = request.expectedROI;
                         riskLevel = request.riskLevel;
-                        status = project.status;
-                        tags = request.tags;
+
+                        // Investment Information (updated)
                         minInvestment = request.minInvestment;
                         maxInvestment = request.maxInvestment;
                         investorCount = project.investorCount; // Keep existing count
+
+                        // Timestamps (updated)
                         createdAt = project.createdAt;
                         updatedAt = Time.now();
                         launchDate = project.launchDate; // Keep existing launch date
                         targetDate = request.targetDate;
+
+                        // Legal and Compliance (updated)
+                        legalStructure = request.legalStructure;
+                        jurisdiction = request.jurisdiction;
                     };
 
                     if (storage.updateProject(projectId, updatedProject)) {
@@ -146,6 +209,33 @@ module ProjectService {
                     };
                 };
             };
+        };
+
+        // Get project by ID
+        public func getProject(projectId : Text) : ?Project {
+            storage.getProject(projectId);
+        };
+
+        // Get projects by founder ID
+        public func getProjectsByFounder(founderId : Text) : [Project] {
+            storage.getProjectsByFounder(founderId);
+        };
+
+        // Get projects by founder principal
+        public func getProjectsByFounderPrincipal(principal : Principal) : [Project] {
+            storage.getProjectsByFounderPrincipal(principal);
+        };
+
+        // Get projects by industry
+        public func getProjectsByIndustry(industry : Industry) : [Project] {
+            let allProjects = storage.getAllProjects();
+            let filteredProjects = Array.filter<Project>(
+                allProjects,
+                func(project : Project) : Bool {
+                    project.industry == industry;
+                },
+            );
+            filteredProjects;
         };
 
         // Submit project for review (change status from Draft to InReview)
@@ -167,18 +257,31 @@ module ProjectService {
                         id = project.id;
                         founderId = project.founderId;
                         founderPrincipal = project.founderPrincipal;
+                        companyName = project.companyName;
+                        companyTagline = project.companyTagline;
+                        website = project.website;
+                        companyLogo = project.companyLogo;
                         projectType = project.projectType;
-                        title = project.title;
-                        description = project.description;
-                        category = project.category;
+                        industry = project.industry;
                         location = project.location;
+                        problem = project.problem;
+                        solution = project.solution;
+                        marketOpportunity = project.marketOpportunity;
                         fundingGoal = project.fundingGoal;
+                        companyValuation = project.companyValuation;
+                        minimumFunding = project.minimumFunding;
                         fundingRaised = project.fundingRaised;
+                        useOfFunds = project.useOfFunds;
+                        milestones = project.milestones;
+                        teamMembers = project.teamMembers;
+                        pitchDeckUrl = project.pitchDeckUrl;
+                        demoVideoUrl = project.demoVideoUrl;
+                        productImages = project.productImages;
+                        status = #InReview; // Change status
+                        tags = project.tags;
                         timeline = project.timeline;
                         expectedROI = project.expectedROI;
                         riskLevel = project.riskLevel;
-                        status = #InReview;
-                        tags = project.tags;
                         minInvestment = project.minInvestment;
                         maxInvestment = project.maxInvestment;
                         investorCount = project.investorCount;
@@ -186,6 +289,8 @@ module ProjectService {
                         updatedAt = Time.now();
                         launchDate = project.launchDate;
                         targetDate = project.targetDate;
+                        legalStructure = project.legalStructure;
+                        jurisdiction = project.jurisdiction;
                     };
 
                     if (storage.updateProject(projectId, updatedProject)) {
@@ -211,18 +316,31 @@ module ProjectService {
                         id = project.id;
                         founderId = project.founderId;
                         founderPrincipal = project.founderPrincipal;
+                        companyName = project.companyName;
+                        companyTagline = project.companyTagline;
+                        website = project.website;
+                        companyLogo = project.companyLogo;
                         projectType = project.projectType;
-                        title = project.title;
-                        description = project.description;
-                        category = project.category;
+                        industry = project.industry;
                         location = project.location;
+                        problem = project.problem;
+                        solution = project.solution;
+                        marketOpportunity = project.marketOpportunity;
                         fundingGoal = project.fundingGoal;
+                        companyValuation = project.companyValuation;
+                        minimumFunding = project.minimumFunding;
                         fundingRaised = project.fundingRaised;
+                        useOfFunds = project.useOfFunds;
+                        milestones = project.milestones;
+                        teamMembers = project.teamMembers;
+                        pitchDeckUrl = project.pitchDeckUrl;
+                        demoVideoUrl = project.demoVideoUrl;
+                        productImages = project.productImages;
+                        status = #Active; // Change status
+                        tags = project.tags;
                         timeline = project.timeline;
                         expectedROI = project.expectedROI;
                         riskLevel = project.riskLevel;
-                        status = #Active;
-                        tags = project.tags;
                         minInvestment = project.minInvestment;
                         maxInvestment = project.maxInvestment;
                         investorCount = project.investorCount;
@@ -230,6 +348,8 @@ module ProjectService {
                         updatedAt = Time.now();
                         launchDate = ?Time.now(); // Set launch date
                         targetDate = project.targetDate;
+                        legalStructure = project.legalStructure;
+                        jurisdiction = project.jurisdiction;
                     };
 
                     if (storage.updateProject(projectId, updatedProject)) {
@@ -259,18 +379,31 @@ module ProjectService {
                         id = project.id;
                         founderId = project.founderId;
                         founderPrincipal = project.founderPrincipal;
+                        companyName = project.companyName;
+                        companyTagline = project.companyTagline;
+                        website = project.website;
+                        companyLogo = project.companyLogo;
                         projectType = project.projectType;
-                        title = project.title;
-                        description = project.description;
-                        category = project.category;
+                        industry = project.industry;
                         location = project.location;
+                        problem = project.problem;
+                        solution = project.solution;
+                        marketOpportunity = project.marketOpportunity;
                         fundingGoal = project.fundingGoal;
+                        companyValuation = project.companyValuation;
+                        minimumFunding = project.minimumFunding;
                         fundingRaised = project.fundingRaised;
+                        useOfFunds = project.useOfFunds;
+                        milestones = project.milestones;
+                        teamMembers = project.teamMembers;
+                        pitchDeckUrl = project.pitchDeckUrl;
+                        demoVideoUrl = project.demoVideoUrl;
+                        productImages = project.productImages;
+                        status = newStatus; // Change status
+                        tags = project.tags;
                         timeline = project.timeline;
                         expectedROI = project.expectedROI;
                         riskLevel = project.riskLevel;
-                        status = newStatus;
-                        tags = project.tags;
                         minInvestment = project.minInvestment;
                         maxInvestment = project.maxInvestment;
                         investorCount = project.investorCount;
@@ -278,6 +411,8 @@ module ProjectService {
                         updatedAt = currentTime;
                         launchDate = launchDate;
                         targetDate = project.targetDate;
+                        legalStructure = project.legalStructure;
+                        jurisdiction = project.jurisdiction;
                     };
 
                     if (storage.updateProject(projectId, updatedProject)) {
@@ -317,18 +452,31 @@ module ProjectService {
                         id = project.id;
                         founderId = project.founderId;
                         founderPrincipal = project.founderPrincipal;
+                        companyName = project.companyName;
+                        companyTagline = project.companyTagline;
+                        website = project.website;
+                        companyLogo = project.companyLogo;
                         projectType = project.projectType;
-                        title = project.title;
-                        description = project.description;
-                        category = project.category;
+                        industry = project.industry;
                         location = project.location;
+                        problem = project.problem;
+                        solution = project.solution;
+                        marketOpportunity = project.marketOpportunity;
                         fundingGoal = project.fundingGoal;
-                        fundingRaised = newFundingRaised;
+                        companyValuation = project.companyValuation;
+                        minimumFunding = project.minimumFunding;
+                        fundingRaised = newFundingRaised; // Update funding
+                        useOfFunds = project.useOfFunds;
+                        milestones = project.milestones;
+                        teamMembers = project.teamMembers;
+                        pitchDeckUrl = project.pitchDeckUrl;
+                        demoVideoUrl = project.demoVideoUrl;
+                        productImages = project.productImages;
+                        status = newStatus; // Update status if needed
+                        tags = project.tags;
                         timeline = project.timeline;
                         expectedROI = project.expectedROI;
                         riskLevel = project.riskLevel;
-                        status = newStatus;
-                        tags = project.tags;
                         minInvestment = project.minInvestment;
                         maxInvestment = project.maxInvestment;
                         investorCount = project.investorCount + 1; // Increment investor count
@@ -336,6 +484,8 @@ module ProjectService {
                         updatedAt = Time.now();
                         launchDate = project.launchDate;
                         targetDate = project.targetDate;
+                        legalStructure = project.legalStructure;
+                        jurisdiction = project.jurisdiction;
                     };
 
                     if (storage.updateProject(projectId, updatedProject)) {

@@ -197,16 +197,16 @@ module InvestmentService {
             storage.getInvestmentsByFounder(founderId);
         };
 
-        // Get investment summaries for investor
+        // Get investment summaries for investor - FIXED: using companyName instead of title
         public func getInvestmentSummariesForInvestor(investorId : Text, projects : [Project]) : [InvestmentSummary] {
             let investments = storage.getInvestmentsByInvestor(investorId);
 
             Array.mapFilter<Investment, InvestmentSummary>(
                 investments,
                 func(investment : Investment) : ?InvestmentSummary {
-                    // Find project title
+                    // Find project company name (FIXED: was project.title)
                     let projectTitle = switch (Array.find<Project>(projects, func(p : Project) : Bool { p.id == investment.projectId })) {
-                        case (?project) { project.title };
+                        case (?project) { project.companyName }; // FIXED: changed from project.title to project.companyName
                         case null { "Unknown Project" };
                     };
 
