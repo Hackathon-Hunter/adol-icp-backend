@@ -4,10 +4,16 @@ import Result "mo:base/Result";
 import Nat "mo:base/Nat";
 import Text "mo:base/Text";
 import Buffer "mo:base/Buffer";
+import Int "mo:base/Int";
+import Blob "mo:base/Blob";
+import Nat64 "mo:base/Nat64";
+import Float "mo:base/Float";
 import DateTime "mo:datetime/DateTime";
 import NFTTypes "../types/NFTTypes";
 import ProjectTypes "../types/ProjectTypes";
+import DummyICPTypes "../types/DummyICPTypes";
 import NFTStorage "../storage/NFTStorage";
+import DummyICPTokenService "../services/DummyICPTokenService";
 
 module NFTService {
 
@@ -25,10 +31,19 @@ module NFTService {
     type TokenMetadata = NFTTypes.TokenMetadata;
     type Project = ProjectTypes.Project;
     type ProjectStatus = ProjectTypes.ProjectStatus;
+    type PaymentRequest = DummyICPTypes.PaymentRequest;
+    type PaymentResult = DummyICPTypes.PaymentResult;
+    type TransferArgs = DummyICPTypes.TransferArgs;
 
     public class NFTManager() {
 
         private let storage = NFTStorage.NFTStore();
+        private let icpToken = DummyICPTokenService.DummyICPToken();
+
+        // Initialize the ICP token service
+        public func init() {
+            icpToken.init();
+        };
 
         // System functions for upgrades
         public func preupgrade() : ([(Text, NFTCollection)], [(TokenId, NFTToken)], [(Principal, [TokenId])]) {
@@ -43,7 +58,7 @@ module NFTService {
             storage.postupgrade(collectionEntries, tokenEntries, ownerEntries);
         };
 
-        // Calculate NFT price based on funding goal and supply
+        // Calculate NFT price based on funding goal and supply (returns price in USD cents)
         private func calculateTokenPrice(fundingGoal : Nat, maxSupply : Nat) : Nat {
             if (maxSupply == 0) {
                 return 0;
@@ -87,12 +102,7 @@ module NFTService {
                         return #err("NFT collection already exists for this project");
                     };
 
-                    // Validate supply
-                    if (request.maxSupply == 0 or request.maxSupply > 1000000) {
-                        return #err("Max supply must be between 1 and 1,000,000");
-                    };
-
-                    // Calculate price per token
+                    // Calculate price per token in USD cents
                     let pricePerToken = switch (request.pricePerToken) {
                         case (?price) { price };
                         case null {
@@ -100,15 +110,11 @@ module NFTService {
                         };
                     };
 
-                    if (pricePerToken == 0) {
-                        return #err("Invalid token price calculation");
-                    };
+                    // Generate collection ID
+                    let collectionId = "nft-" # request.projectId # "-" # Int.toText(Time.now());
 
-                    // Create collection
-                    let collectionId = storage.generateCollectionId();
-                    let currentTime = Time.now();
-
-                    let collectionMetadata : CollectionMetadata = {
+                    // Create collection metadata
+                    let metadata : CollectionMetadata = {
                         name = request.name;
                         symbol = request.symbol;
                         description = request.description;
@@ -116,14 +122,15 @@ module NFTService {
                         supply_cap = ?request.maxSupply;
                     };
 
+                    // Create new collection
                     let newCollection : NFTCollection = {
                         id = collectionId;
                         projectId = request.projectId;
-                        metadata = collectionMetadata;
-                        totalSupply = 0; // Start with 0 minted
+                        metadata = metadata;
+                        totalSupply = 0;
                         maxSupply = request.maxSupply;
-                        pricePerToken = pricePerToken;
-                        createdAt = currentTime;
+                        pricePerToken = pricePerToken; // Price in USD cents
+                        createdAt = Time.now();
                         createdBy = adminPrincipal;
                         isActive = true;
                     };
@@ -136,23 +143,69 @@ module NFTService {
             };
         };
 
-        // Get collection by ID
-        public func getCollection(collectionId : Text) : ?NFTCollection {
-            storage.getCollection(collectionId);
+        // Process ICP payment for NFT purchase
+        private func processICPPayment(
+            buyer : Principal,
+            recipient : Principal,
+            amountUSD : Nat,
+            memo : ?Text,
+        ) : PaymentResult {
+            // Convert USD to ICP
+            let amountICP = icpToken.usdCentsToICPe8s(amountUSD);
+
+            // Check buyer's balance
+            let buyerBalance = icpToken.balanceOf(buyer);
+            if (buyerBalance < amountICP) {
+                return #err(#InsufficientBalance({ required = amountICP; available = buyerBalance }));
+            };
+
+            // Prepare transfer arguments
+            let transferArgs : TransferArgs = {
+                to = recipient;
+                amount = amountICP;
+                fee = ?10000; // Default ICP fee: 0.0001 ICP
+                memo = switch (memo) {
+                    case (?m) { ?Blob.toArray(Text.encodeUtf8(m)) };
+                    case null { null };
+                };
+                from_subaccount = null;
+                to_subaccount = null;
+                created_at_time = ?Nat64.fromNat(Int.abs(Time.now()));
+            };
+
+            // Execute transfer
+            switch (icpToken.transferFrom(buyer, transferArgs)) {
+                case (#err(error)) {
+                    let errorMsg = switch (error) {
+                        case (#InsufficientFunds({ balance })) {
+                            "Insufficient funds. Available: " # Nat.toText(balance) # " e8s";
+                        };
+                        case (#BadFee({ expected_fee })) {
+                            "Invalid fee. Expected: " # Nat.toText(expected_fee) # " e8s";
+                        };
+                        case (#GenericError({ message })) { message };
+                        case (_) { "Transfer failed" };
+                    };
+                    #err(#TransferFailed(errorMsg));
+                };
+                case (#ok(transactionId)) {
+                    #ok({
+                        transactionId = transactionId;
+                        amountICP = amountICP;
+                        amountUSD = amountUSD;
+                        exchangeRate = icpToken.getICPToUSDRate();
+                        timestamp = Time.now();
+                    });
+                };
+            };
         };
 
-        // Get collections by project
-        public func getCollectionsByProject(projectId : Text) : [NFTCollection] {
-            storage.getCollectionsByProject(projectId);
-        };
-
-        // Get all active collections
-        public func getActiveCollections() : [NFTCollection] {
-            storage.getActiveCollections();
-        };
-
-        // Mint NFT token (when user purchases)
-        public func mintToken(request : MintRequest, _buyer : Principal) : MintResult {
+        // Purchase NFTs with ICP tokens
+        public func purchaseTokensWithICP(
+            request : PurchaseRequest,
+            buyer : Principal,
+            projectWallet : Principal // Project's wallet to receive funds
+        ) : Result.Result<{ tokenIds : [TokenId]; paymentDetails : DummyICPTypes.PaymentSuccess; totalSupplyAfter : Nat }, Text> {
             switch (storage.getCollection(request.collectionId)) {
                 case null { #err("Collection not found") };
                 case (?collection) {
@@ -161,16 +214,128 @@ module NFTService {
                         return #err("Collection is not active");
                     };
 
-                    // Check if max supply reached
-                    if (storage.getRemainingSupply(request.collectionId) == 0) {
-                        return #err("Collection is sold out");
+                    // Check remaining supply
+                    let remainingSupply = collection.maxSupply - collection.totalSupply;
+                    if (remainingSupply < request.quantity) {
+                        return #err("Not enough tokens available. Remaining: " # Nat.toText(remainingSupply));
+                    };
+
+                    // Calculate total cost in USD cents
+                    let totalCostUSD = collection.pricePerToken * request.quantity;
+
+                    // Process ICP payment
+                    let paymentMemo = "NFT Purchase - Collection: " # collection.id # " - Quantity: " # Nat.toText(request.quantity);
+                    switch (processICPPayment(buyer, projectWallet, totalCostUSD, ?paymentMemo)) {
+                        case (#err(paymentError)) {
+                            let errorMsg = switch (paymentError) {
+                                case (#InsufficientBalance({ required; available })) {
+                                    let requiredICP = icpToken.icpE8sToUSDCents(required);
+                                    let availableICP = icpToken.icpE8sToUSDCents(available);
+                                    "Insufficient ICP balance. Required: ~$" # Nat.toText(requiredICP / 100) # " USD worth of ICP";
+                                };
+                                case (#TransferFailed(msg)) {
+                                    "Payment failed: " # msg;
+                                };
+                                case (_) { "Payment processing error" };
+                            };
+                            return #err(errorMsg);
+                        };
+                        case (#ok(paymentDetails)) {
+                            // Payment successful, now mint the NFTs
+                            let mintedTokens = Buffer.Buffer<TokenId>(request.quantity);
+                            var i = 0;
+
+                            while (i < request.quantity) {
+                                let tokenNumber = collection.totalSupply + i + 1;
+                                let tokenMetadata : TokenMetadata = {
+                                    name = collection.metadata.name # " #" # Nat.toText(tokenNumber);
+                                    description = "Investment token for " # collection.metadata.name;
+                                    image = collection.metadata.image;
+                                    attributes = [
+                                        ("collection", collection.metadata.name),
+                                        ("token_number", Nat.toText(tokenNumber)),
+                                        ("price_usd", Nat.toText(collection.pricePerToken)),
+                                        ("price_icp", Nat.toText(paymentDetails.amountICP / request.quantity)),
+                                        ("purchase_date", DateTime.now().toText()),
+                                        ("exchange_rate", Float.toText(paymentDetails.exchangeRate)),
+                                    ];
+                                };
+
+                                let mintRequest : MintRequest = {
+                                    collectionId = request.collectionId;
+                                    to = buyer;
+                                    tokenMetadata = tokenMetadata;
+                                };
+
+                                switch (mintToken(mintRequest, buyer)) {
+                                    case (#err(error)) {
+                                        return #err("Failed to mint token: " # error);
+                                    };
+                                    case (#ok(tokenId)) {
+                                        mintedTokens.add(tokenId);
+                                    };
+                                };
+
+                                i += 1;
+                            };
+
+                            // Update collection total supply
+                            let updatedCollection : NFTCollection = {
+                                id = collection.id;
+                                projectId = collection.projectId;
+                                metadata = collection.metadata;
+                                totalSupply = collection.totalSupply + request.quantity;
+                                maxSupply = collection.maxSupply;
+                                pricePerToken = collection.pricePerToken;
+                                createdAt = collection.createdAt;
+                                createdBy = collection.createdBy;
+                                isActive = collection.isActive;
+                            };
+                            ignore storage.updateCollection(request.collectionId, updatedCollection);
+
+                            #ok({
+                                tokenIds = Buffer.toArray(mintedTokens);
+                                paymentDetails = paymentDetails;
+                                totalSupplyAfter = updatedCollection.totalSupply;
+                            });
+                        };
+                    };
+                };
+            };
+        };
+
+        // Legacy purchase function (for backward compatibility)
+        public func purchaseTokens(request : PurchaseRequest, buyer : Principal) : PurchaseResult {
+            // This now redirects to the ICP-based purchase
+            // You would need to provide a default project wallet
+            let defaultProjectWallet = Principal.fromText("rdmx6-jaaaa-aaaaa-aaadq-cai");
+
+            switch (purchaseTokensWithICP(request, buyer, defaultProjectWallet)) {
+                case (#err(error)) { #err(error) };
+                case (#ok(result)) { #ok(result.tokenIds) };
+            };
+        };
+
+        // Mint individual token
+        public func mintToken(request : MintRequest, minter : Principal) : MintResult {
+            switch (storage.getCollection(request.collectionId)) {
+                case null { #err("Collection not found") };
+                case (?collection) {
+                    // Check if collection exists and is active
+                    if (not collection.isActive) {
+                        return #err("Collection is not active");
+                    };
+
+                    // Check supply limit
+                    if (collection.totalSupply >= collection.maxSupply) {
+                        return #err("Collection has reached maximum supply");
                     };
 
                     // Generate token ID
-                    let tokenId = storage.generateTokenId();
+                    let tokenId : TokenId = collection.totalSupply + 1;
                     let currentTime = Time.now();
 
-                    // Create token
+                    // Create new token
                     let newToken : NFTToken = {
                         tokenId = tokenId;
                         collectionId = request.collectionId;
@@ -183,84 +348,19 @@ module NFTService {
                     // Store token
                     storage.putToken(tokenId, newToken);
 
-                    // Update collection total supply
-                    let updatedCollection : NFTCollection = {
-                        id = collection.id;
-                        projectId = collection.projectId;
-                        metadata = collection.metadata;
-                        totalSupply = collection.totalSupply + 1;
-                        maxSupply = collection.maxSupply;
-                        pricePerToken = collection.pricePerToken;
-                        createdAt = collection.createdAt;
-                        createdBy = collection.createdBy;
-                        isActive = collection.isActive;
-                    };
-                    ignore storage.updateCollection(request.collectionId, updatedCollection);
-
                     #ok(tokenId);
                 };
             };
         };
 
-        // Purchase NFTs (simplified purchase flow)
-        public func purchaseTokens(request : PurchaseRequest, buyer : Principal) : PurchaseResult {
-            switch (storage.getCollection(request.collectionId)) {
-                case null { #err("Collection not found") };
-                case (?collection) {
-                    // Check if collection is active
-                    if (not collection.isActive) {
-                        return #err("Collection is not active");
-                    };
+        // Get collection information
+        public func getCollection(collectionId : Text) : ?NFTCollection {
+            storage.getCollection(collectionId);
+        };
 
-                    // Check remaining supply
-                    let remainingSupply = storage.getRemainingSupply(request.collectionId);
-                    if (remainingSupply < request.quantity) {
-                        return #err("Not enough tokens available. Remaining: " # Nat.toText(remainingSupply));
-                    };
-
-                    // Calculate total cost
-                    let totalCost = collection.pricePerToken * request.quantity;
-                    if (request.paymentAmount < totalCost) {
-                        return #err("Insufficient payment. Required: " # Nat.toText(totalCost) # " cents");
-                    };
-
-                    // Mint tokens
-                    let mintedTokens = Buffer.Buffer<TokenId>(request.quantity);
-                    var i = 0;
-                    while (i < request.quantity) {
-                        let tokenMetadata : TokenMetadata = {
-                            name = collection.metadata.name # " #" # Nat.toText(collection.totalSupply + i + 1);
-                            description = "Investment token for " # collection.metadata.name;
-                            image = collection.metadata.image;
-                            attributes = [
-                                ("collection", collection.metadata.name),
-                                ("token_number", Nat.toText(collection.totalSupply + i + 1)),
-                                ("price", Nat.toText(collection.pricePerToken)),
-                                ("purchase_date", DateTime.now().toText()),
-                            ];
-                        };
-
-                        let mintRequest : MintRequest = {
-                            collectionId = request.collectionId;
-                            to = buyer;
-                            tokenMetadata = tokenMetadata;
-                        };
-
-                        switch (mintToken(mintRequest, buyer)) {
-                            case (#err(error)) {
-                                return #err("Failed to mint token: " # error);
-                            };
-                            case (#ok(tokenId)) {
-                                mintedTokens.add(tokenId);
-                            };
-                        };
-
-                        i += 1;
-                    };
-
-                    #ok(Buffer.toArray(mintedTokens));
-                };
-            };
+        // Get collections by project
+        public func getCollectionsByProject(projectId : Text) : [NFTCollection] {
+            storage.getCollectionsByProject(projectId);
         };
 
         // Get token by ID
@@ -268,98 +368,51 @@ module NFTService {
             storage.getToken(tokenId);
         };
 
-        // Get tokens owned by user
+        // Get tokens owned by principal
         public func getTokensByOwner(owner : Principal) : [NFTToken] {
-            storage.getTokensOwnedByUser(owner);
-        };
-
-        // Get tokens in a collection
-        public func getTokensByCollection(collectionId : Text) : [NFTToken] {
-            storage.getTokensByCollection(collectionId);
-        };
-
-        // Transfer token (ICRC-7 compliant)
-        public func transferToken(tokenId : TokenId, from : Principal, to : Principal) : Result.Result<(), Text> {
-            switch (storage.getToken(tokenId)) {
-                case null { #err("Token not found") };
-                case (?token) {
-                    if (token.owner != from) {
-                        return #err("Unauthorized: Not token owner");
-                    };
-
-                    if (storage.transferToken(tokenId, from, to)) {
-                        #ok(());
-                    } else {
-                        #err("Transfer failed");
-                    };
+            let tokenIds = storage.getTokensByOwner(owner);
+            let tokens = Buffer.Buffer<NFTToken>(tokenIds.size());
+            for (tokenId in tokenIds.vals()) {
+                switch (storage.getToken(tokenId)) {
+                    case (?token) { tokens.add(token) };
+                    case null {};
                 };
             };
+            Buffer.toArray(tokens);
         };
 
-        // Admin functions
-        public func pauseCollection(collectionId : Text) : Result.Result<(), Text> {
+        // Get remaining supply for a collection
+        public func getRemainingSupply(collectionId : Text) : Nat {
             switch (storage.getCollection(collectionId)) {
-                case null { #err("Collection not found") };
+                case null { 0 };
                 case (?collection) {
-                    let updatedCollection : NFTCollection = {
-                        id = collection.id;
-                        projectId = collection.projectId;
-                        metadata = collection.metadata;
-                        totalSupply = collection.totalSupply;
-                        maxSupply = collection.maxSupply;
-                        pricePerToken = collection.pricePerToken;
-                        createdAt = collection.createdAt;
-                        createdBy = collection.createdBy;
-                        isActive = false;
-                    };
-
-                    if (storage.updateCollection(collectionId, updatedCollection)) {
-                        #ok(());
+                    if (collection.totalSupply >= collection.maxSupply) {
+                        0;
                     } else {
-                        #err("Failed to pause collection");
+                        collection.maxSupply - collection.totalSupply;
                     };
                 };
             };
         };
 
-        public func resumeCollection(collectionId : Text) : Result.Result<(), Text> {
-            switch (storage.getCollection(collectionId)) {
-                case null { #err("Collection not found") };
-                case (?collection) {
-                    let updatedCollection : NFTCollection = {
-                        id = collection.id;
-                        projectId = collection.projectId;
-                        metadata = collection.metadata;
-                        totalSupply = collection.totalSupply;
-                        maxSupply = collection.maxSupply;
-                        pricePerToken = collection.pricePerToken;
-                        createdAt = collection.createdAt;
-                        createdBy = collection.createdBy;
-                        isActive = true;
-                    };
-
-                    if (storage.updateCollection(collectionId, updatedCollection)) {
-                        #ok(());
-                    } else {
-                        #err("Failed to resume collection");
-                    };
-                };
-            };
+        // Get ICP token service for balance checks etc.
+        public func getICPToken() : DummyICPTokenService.DummyICPToken {
+            icpToken;
         };
 
-        // Statistics
-        public func getCollectionStats() : NFTTypes.CollectionStats {
-            {
-                totalCollections = storage.getCollectionCount();
-                totalTokensMinted = storage.getTotalTokenCount();
-                totalValueLocked = storage.getTotalValueLocked();
-                activeCollections = storage.getActiveCollections().size();
-            };
+        // Helper function to get current ICP/USD exchange rate
+        public func getExchangeRate() : { icpToUsd : Float; usdToIcp : Float } {
+            icpToken.getExchangeRateInfo();
         };
 
-        // Get user's NFT balance for a specific collection
-        public func getUserBalance(user : Principal, collectionId : Text) : NFTTypes.OwnerBalance {
-            storage.getOwnerBalance(user, collectionId);
+        // Calculate ICP amount needed for USD purchase
+        public func calculateICPForUSD(usdCents : Nat) : Nat {
+            icpToken.usdCentsToICPe8s(usdCents);
+        };
+
+        // Calculate USD value of ICP amount
+        public func calculateUSDForICP(icpE8s : Nat) : Nat {
+            icpToken.icpE8sToUSDCents(icpE8s);
         };
     };
 };

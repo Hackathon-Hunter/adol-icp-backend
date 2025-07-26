@@ -1,439 +1,535 @@
-import FounderTypes "./types/FounderTypes";
-import ProjectTypes "./types/ProjectTypes";
-import InvestorTypes "./types/InvestorTypes";
-import InvestmentTypes "./types/InvestmentTypes";
-import NFTTypes "./types/NFTTypes";
-import FounderService "./services/FounderService";
+// src/backend/main.mo - Main integration with ICP token support
+import Principal "mo:base/Principal";
+import Result "mo:base/Result";
+import Debug "mo:base/Debug";
+import Array "mo:base/Array";
+import Float "mo:base/Float";
+
+// Import services
 import ProjectService "./services/ProjectService";
 import InvestorService "./services/InvestorService";
-import InvestmentService "./services/InvestmentService";
 import NFTService "./services/NFTService";
-import ICPTransferService "./services/ICPTransferService";
-import Nat "mo:base/Nat";
-import Principal "mo:base/Principal";
+import InvestmentService "./services/InvestmentService";
+import DummyICPTokenService "./services/DummyICPTokenService";
 
-actor PlantifyBackend {
+// Import types
+import ProjectTypes "./types/ProjectTypes";
+import InvestorTypes "./types/InvestorTypes";
+import NFTTypes "./types/NFTTypes";
+import InvestmentTypes "./types/InvestmentTypes";
+import DummyICPTypes "./types/DummyICPTypes";
 
-    // Founder types
-    type Founder = FounderTypes.Founder;
-    type FounderRegistrationRequest = FounderTypes.FounderRegistrationRequest;
-    type FounderRegistrationResult = FounderTypes.RegistrationResult;
-    type FounderUpdateResult = FounderTypes.UpdateResult;
+actor CryptoFundPlatform {
 
-    // Project types
-    type Project = ProjectTypes.Project;
-    type ProjectCreateRequest = ProjectTypes.ProjectCreateRequest;
-    type ProjectUpdateRequest = ProjectTypes.ProjectUpdateRequest;
-    type ProjectResult = ProjectTypes.ProjectResult;
-    type ProjectUpdateResult = ProjectTypes.UpdateResult;
-    type ProjectStatus = ProjectTypes.ProjectStatus;
-
-    // Investor types
-    type Investor = InvestorTypes.Investor;
-    type InvestorRegistrationRequest = InvestorTypes.InvestorRegistrationRequest;
-    type InvestorRegistrationResult = InvestorTypes.RegistrationResult;
-    type InvestorUpdateResult = InvestorTypes.UpdateResult;
-
-    // Investment types
-    type Investment = InvestmentTypes.Investment;
-    type PurchaseRequest = InvestmentTypes.PurchaseRequest;
-    type PurchaseResult = InvestmentTypes.PurchaseResult;
-    type InvestmentSummary = InvestmentTypes.InvestmentSummary;
-    type ICPTransferRequest = InvestmentTypes.ICPTransferRequest;
-    type TransferResult = InvestmentTypes.TransferResult;
-
-    // NFT types
-    type NFTCollection = NFTTypes.NFTCollection;
-    type CreateCollectionRequest = NFTTypes.CreateCollectionRequest;
-    type CollectionResult = NFTTypes.CollectionResult;
-
-    // Initialize managers
-    private let founderManager = FounderService.FounderManager();
+    // Service managers
     private let projectManager = ProjectService.ProjectManager();
     private let investorManager = InvestorService.InvestorManager();
-    private let investmentManager = InvestmentService.InvestmentManager();
     private let nftManager = NFTService.NFTManager();
-    private let icpTransferManager = ICPTransferService.ICPTransferManager();
+    private let investmentManager = InvestmentService.InvestmentManager();
+    private let icpToken = DummyICPTokenService.DummyICPToken();
 
-    // Stable variables for upgrades
-    private stable var foundersData : [(Text, Founder)] = [];
-    private stable var projectsData : [(Text, Project)] = [];
-    private stable var investorsData : [(Text, Investor)] = [];
-    private stable var investmentsData : [(Text, Investment)] = [];
-    private stable var nftCollectionsData : [(Text, NFTCollection)] = [];
-    private stable var nftTokensData : [(Nat, NFTTypes.NFTToken)] = [];
-    private stable var nftOwnershipData : [(Principal, [Nat])] = [];
-
-    // System functions for upgrades
-    system func preupgrade() {
-        foundersData := founderManager.preupgrade();
-        projectsData := projectManager.preupgrade();
-        investorsData := investorManager.preupgrade();
-        investmentsData := investmentManager.preupgrade();
-        let (collections, tokens, ownership) = nftManager.preupgrade();
-        nftCollectionsData := collections;
-        nftTokensData := tokens;
-        nftOwnershipData := ownership;
+    // Initialize services
+    public func init() : async () {
+        nftManager.init();
+        icpToken.init();
+        Debug.print("CryptoFund Platform initialized with ICP token support");
     };
 
-    system func postupgrade() {
-        founderManager.postupgrade(foundersData);
-        projectManager.postupgrade(projectsData);
-        investorManager.postupgrade(investorsData);
-        investmentManager.postupgrade(investmentsData);
-        nftManager.postupgrade(nftCollectionsData, nftTokensData, nftOwnershipData);
-        foundersData := [];
-        projectsData := [];
-        investorsData := [];
-        investmentsData := [];
-        nftCollectionsData := [];
-        nftTokensData := [];
-        nftOwnershipData := [];
+    // ========== ICP Token Functions ==========
+
+    // Get ICP balance for a principal
+    public query func getICPBalance(account : Principal) : async Nat {
+        icpToken.balanceOf(account);
     };
 
-    // =============================================================================
-    // FOUNDER API FUNCTIONS
-    // =============================================================================
-
-    // Register new founder
-    public shared (msg) func registerFounder(request : FounderRegistrationRequest) : async FounderRegistrationResult {
-        founderManager.registerFounder(request, msg.caller);
+    // Mint ICP tokens (for testing purposes)
+    public func mintICP(to : Principal, amount : Nat) : async Bool {
+        icpToken.mint(to, amount);
     };
 
-    // Get founder by ID
-    public query func getFounder(founderId : Text) : async ?Founder {
-        founderManager.getFounder(founderId);
+    // Get current ICP to USD exchange rate
+    public query func getExchangeRate() : async {
+        icpToUsd : Float;
+        usdToIcp : Float;
+    } {
+        icpToken.getExchangeRateInfo();
     };
 
-    // Get founder by email
-    public query func getFounderByEmail(email : Text) : async ?Founder {
-        founderManager.getFounderByEmail(email);
+    // Calculate ICP amount needed for USD purchase
+    public query func calculateICPForUSD(usdCents : Nat) : async Nat {
+        icpToken.usdCentsToICPe8s(usdCents);
     };
 
-    // Get founder by principal (current user)
-    public shared (msg) func getMyFounderProfile() : async ?Founder {
-        founderManager.getFounderByPrincipal(msg.caller);
+    // Calculate USD value of ICP amount
+    public query func calculateUSDForICP(icpE8s : Nat) : async Nat {
+        icpToken.icpE8sToUSDCents(icpE8s);
     };
 
-    // Update founder verification status (admin function)
-    public shared (_msg) func updateFounderVerification(founderId : Text, isVerified : Bool) : async FounderUpdateResult {
-        // TODO: Add admin authorization check
-        founderManager.updateFounderVerification(founderId, isVerified);
-    };
+    // ========== Enhanced NFT Purchase with ICP ==========
 
-    // Update founder profile (only by the founder themselves)
-    public shared (msg) func updateMyFounderProfile(founderId : Text, request : FounderRegistrationRequest) : async FounderUpdateResult {
-        founderManager.updateFounderProfile(founderId, request, msg.caller);
-    };
+    // Purchase NFTs with ICP payment and update project funding
+    public func purchaseNFTWithICP(
+        request : InvestmentTypes.PurchaseRequest,
+        caller : Principal,
+    ) : async Result.Result<{ investment : InvestmentTypes.Investment; tokenIds : [NFTTypes.TokenId]; paymentDetails : DummyICPTypes.PaymentSuccess; projectFundingUpdated : Bool }, Text> {
 
-    // Get all founders (admin function)
-    public query func getAllFounders() : async [Founder] {
-        founderManager.getAllFounders();
-    };
-
-    // Get total number of registered founders
-    public query func getFounderCount() : async Nat {
-        founderManager.getFounderCount();
-    };
-
-    // Check if founder exists by email
-    public query func founderExistsByEmail(email : Text) : async Bool {
-        founderManager.founderExistsByEmail(email);
-    };
-
-    // =============================================================================
-    // INVESTOR API FUNCTIONS
-    // =============================================================================
-
-    // Register new investor
-    public shared (msg) func registerInvestor(request : InvestorRegistrationRequest) : async InvestorRegistrationResult {
-        investorManager.registerInvestor(request, msg.caller);
-    };
-
-    // Get investor by ID
-    public query func getInvestor(investorId : Text) : async ?Investor {
-        investorManager.getInvestor(investorId);
-    };
-
-    // Get investor by email
-    public query func getInvestorByEmail(email : Text) : async ?Investor {
-        investorManager.getInvestorByEmail(email);
-    };
-
-    // Get investor by principal (current user)
-    public shared (msg) func getMyInvestorProfile() : async ?Investor {
-        investorManager.getInvestorByPrincipal(msg.caller);
-    };
-
-    // Update investor verification status (admin function)
-    public shared (_msg) func updateInvestorVerification(investorId : Text, isVerified : Bool) : async InvestorUpdateResult {
-        // TODO: Add admin authorization check
-        investorManager.updateInvestorVerification(investorId, isVerified);
-    };
-
-    // Update investor profile (only by the investor themselves)
-    public shared (msg) func updateMyInvestorProfile(investorId : Text, request : InvestorRegistrationRequest) : async InvestorUpdateResult {
-        investorManager.updateInvestorProfile(investorId, request, msg.caller);
-    };
-
-    // Get all investors (admin function)
-    public query func getAllInvestors() : async [Investor] {
-        investorManager.getAllInvestors();
-    };
-
-    // Get total number of registered investors
-    public query func getInvestorCount() : async Nat {
-        investorManager.getInvestorCount();
-    };
-
-    // Check if investor exists by email
-    public query func investorExistsByEmail(email : Text) : async Bool {
-        investorManager.investorExistsByEmail(email);
-    };
-
-    // =============================================================================
-    // PROJECT API FUNCTIONS
-    // =============================================================================
-
-    // Create new project
-    public shared (msg) func createProject(request : ProjectCreateRequest) : async ProjectResult {
-        // Get founder by principal
-        switch (founderManager.getFounderByPrincipal(msg.caller)) {
+        // Get investor info
+        let investorOpt = investorManager.getInvestorByPrincipal(caller);
+        switch (investorOpt) {
             case null {
-                #err("Founder not found. Please register as a founder first.");
+                return #err("Investor not found. Please register first.");
             };
-            case (?founder) {
-                projectManager.createProject(request, founder.id, msg.caller);
+            case (?investor) {
+
+                // Get project info
+                let projectOpt = projectManager.getProject(request.projectId);
+                switch (projectOpt) {
+                    case null { return #err("Project not found") };
+                    case (?project) {
+
+                        // Get collection info
+                        let collectionOpt = nftManager.getCollection(request.collectionId);
+                        switch (collectionOpt) {
+                            case null {
+                                return #err("NFT collection not found");
+                            };
+                            case (?collection) {
+
+                                // Create investment with ICP payment
+                                switch (
+                                    investmentManager.createInvestmentWithICP(
+                                        request,
+                                        investor,
+                                        project,
+                                        collection,
+                                        {
+                                            purchaseTokensWithICP = nftManager.purchaseTokensWithICP;
+                                        },
+                                        {
+                                            updateProjectFunding = projectManager.updateProjectFunding;
+                                        },
+                                    )
+                                ) {
+                                    case (#err(error)) { #err(error) };
+                                    case (#ok(investment)) {
+
+                                        // Get the NFT purchase details from the investment
+                                        let totalCostUSD = collection.pricePerToken * request.quantity;
+                                        let icpAmount = icpToken.usdCentsToICPe8s(totalCostUSD);
+
+                                        // Create mock payment details for response
+                                        let paymentDetails : DummyICPTypes.PaymentSuccess = {
+                                            transactionId = switch (investment.transactionHash) {
+                                                case (?hash) {
+                                                    // Convert hash to Nat (simplified)
+                                                    1234567890;
+                                                };
+                                                case null { 0 };
+                                            };
+                                            amountICP = investment.amount;
+                                            amountUSD = totalCostUSD;
+                                            exchangeRate = icpToken.getICPToUSDRate();
+                                            timestamp = investment.investmentDate;
+                                        };
+
+                                        #ok({
+                                            investment = investment;
+                                            tokenIds = investment.tokenIds;
+                                            paymentDetails = paymentDetails;
+                                            projectFundingUpdated = true;
+                                        });
+                                    };
+                                };
+                            };
+                        };
+                    };
+                };
             };
         };
     };
 
-    // Get project by ID
-    public query func getProject(projectId : Text) : async ?Project {
-        projectManager.getProject(projectId);
-    };
+    // ========== Enhanced Project Functions ==========
 
-    // Get my projects (projects created by current user)
-    public shared (msg) func getMyProjects() : async [Project] {
-        projectManager.getProjectsByFounderPrincipal(msg.caller);
-    };
+    // Get project with current funding status (updated with real funding)
+    public query func getProjectWithFunding(projectId : Text) : async ?{
+        project : ProjectTypes.Project;
+        fundingProgress : Float; // Percentage funded
+        remainingFunding : Nat; // Amount still needed in USD cents
+        totalInvestors : Nat;
+        availableNFTs : Nat; // NFTs still available for purchase
+    } {
+        switch (projectManager.getProject(projectId)) {
+            case null { null };
+            case (?project) {
+                let totalInvestment = investmentManager.getTotalInvestmentByProject(
+                    projectId,
+                    {
+                        icpE8sToUSDCents = icpToken.icpE8sToUSDCents;
+                    },
+                );
 
-    // Get projects by founder ID
-    public query func getProjectsByFounder(founderId : Text) : async [Project] {
-        projectManager.getProjectsByFounder(founderId);
-    };
+                let fundingProgress = if (project.fundingGoal > 0) {
+                    (Float.fromInt(totalInvestment) / Float.fromInt(project.fundingGoal)) * 100.0;
+                } else {
+                    0.0;
+                };
 
-    // Update project (only by project owner)
-    public shared (msg) func updateProject(projectId : Text, request : ProjectUpdateRequest) : async ProjectUpdateResult {
-        projectManager.updateProject(projectId, request, msg.caller);
-    };
+                let remainingFunding = if (totalInvestment < project.fundingGoal) {
+                    project.fundingGoal - totalInvestment;
+                } else {
+                    0;
+                };
 
-    // Submit project for review
-    public shared (msg) func submitProjectForReview(projectId : Text) : async ProjectUpdateResult {
-        projectManager.submitProjectForReview(projectId, msg.caller);
-    };
+                let investments = investmentManager.getInvestmentsByProject(projectId);
+                let totalInvestors = investments.size();
 
-    // Update project status (admin function)
-    public shared (_msg) func updateProjectStatus(projectId : Text, newStatus : ProjectStatus) : async ProjectUpdateResult {
-        // TODO: Add admin authorization check
-        projectManager.updateProjectStatus(projectId, newStatus);
-    };
+                // Get available NFTs from collections
+                let collections = nftManager.getCollectionsByProject(projectId);
+                let availableNFTs = Array.foldLeft<NFTTypes.NFTCollection, Nat>(
+                    collections,
+                    0,
+                    func(acc : Nat, collection : NFTTypes.NFTCollection) : Nat {
+                        acc + (collection.maxSupply - collection.totalSupply);
+                    },
+                );
 
-    // Delete project (only by project owner)
-    public shared (msg) func deleteProject(projectId : Text) : async ProjectUpdateResult {
-        projectManager.deleteProject(projectId, msg.caller);
-    };
-
-    // Get all projects (admin function)
-    public query func getAllProjects() : async [Project] {
-        projectManager.getAllProjects();
-    };
-
-    // Get projects by status
-    public query func getProjectsByStatus(status : ProjectStatus) : async [Project] {
-        projectManager.getProjectsByStatus(status);
-    };
-
-    // Get active projects (for marketplace)
-    public query func getActiveProjects() : async [Project] {
-        projectManager.getProjectsByStatus(#Active);
-    };
-
-    // Get total number of projects
-    public query func getProjectCount() : async Nat {
-        projectManager.getProjectCount();
-    };
-
-    // =============================================================================
-    // NFT COLLECTION API FUNCTIONS
-    // =============================================================================
-
-    // Create NFT collection for a project (admin function)
-    public shared (msg) func createNFTCollection(request : CreateCollectionRequest) : async CollectionResult {
-        // TODO: Add admin authorization check
-        let project = projectManager.getProject(request.projectId);
-        nftManager.createCollection(request, project, msg.caller);
-    };
-
-    // Get NFT collection by ID
-    public query func getNFTCollection(collectionId : Text) : async ?NFTCollection {
-        nftManager.getCollection(collectionId);
-    };
-
-    // Get NFT collections by project
-    public query func getNFTCollectionsByProject(projectId : Text) : async [NFTCollection] {
-        nftManager.getCollectionsByProject(projectId);
-    };
-
-    // Get all active NFT collections
-    public query func getActiveNFTCollections() : async [NFTCollection] {
-        nftManager.getActiveCollections();
-    };
-
-    // =============================================================================
-    // INVESTMENT API FUNCTIONS
-    // =============================================================================
-
-    // Purchase NFTs (investor function)
-    public shared (msg) func purchaseNFTs(request : PurchaseRequest) : async PurchaseResult {
-        // Get investor
-        let investor = switch (investorManager.getInvestorByPrincipal(msg.caller)) {
-            case null {
-                return #err("Investor not found. Please register as an investor first.");
+                ?{
+                    project = project;
+                    fundingProgress = fundingProgress;
+                    remainingFunding = remainingFunding;
+                    totalInvestors = totalInvestors;
+                    availableNFTs = availableNFTs;
+                };
             };
-            case (?inv) { inv };
         };
-
-        // Get project
-        let project = switch (projectManager.getProject(request.projectId)) {
-            case null { return #err("Project not found") };
-            case (?proj) { proj };
-        };
-
-        // Get founder
-        let founder = switch (founderManager.getFounder(project.founderId)) {
-            case null { return #err("Founder not found") };
-            case (?f) { f };
-        };
-
-        // Get NFT collection
-        let collection = switch (nftManager.getCollection(request.collectionId)) {
-            case null { return #err("NFT collection not found") };
-            case (?coll) { coll };
-        };
-
-        // Process the purchase
-        await investmentManager.purchaseNFTs(request, investor, project, founder, collection, msg.caller);
     };
 
-    // Get my investments
-    public shared (msg) func getMyInvestments() : async [Investment] {
-        investmentManager.getInvestmentsByInvestorPrincipal(msg.caller);
-    };
+    // ========== Enhanced Investor Dashboard ==========
 
-    // Get investment summaries for my portfolio
-    public shared (msg) func getMyInvestmentSummaries() : async [InvestmentSummary] {
-        switch (investorManager.getInvestorByPrincipal(msg.caller)) {
-            case null { [] };
+    // Get comprehensive investor dashboard
+    public query func getInvestorDashboard(caller : Principal) : async ?{
+        investor : InvestorTypes.Investor;
+        investments : [InvestmentTypes.InvestmentSummary];
+        totalInvestedUSD : Nat;
+        totalInvestedICP : Nat;
+        portfolioValue : Nat; // Current USD value
+        ownedNFTs : [NFTTypes.NFTToken];
+        stats : {
+            totalProjects : Nat;
+            totalNFTs : Nat;
+            averageInvestment : Nat;
+        };
+    } {
+        switch (investorManager.getInvestorByPrincipal(caller)) {
+            case null { null };
             case (?investor) {
                 let allProjects = projectManager.getAllProjects();
-                investmentManager.getInvestmentSummariesForInvestor(investor.id, allProjects);
+                let investments = investmentManager.getInvestmentSummariesForInvestor(
+                    investor.id,
+                    allProjects,
+                    {
+                        icpE8sToUSDCents = icpToken.icpE8sToUSDCents;
+                        getICPToUSDRate = icpToken.getICPToUSDRate;
+                    },
+                );
+
+                let totalInvestedUSD = investmentManager.getTotalInvestmentByInvestor(
+                    investor.id,
+                    {
+                        icpE8sToUSDCents = icpToken.icpE8sToUSDCents;
+                    },
+                );
+
+                // Calculate total ICP invested
+                let investorInvestments = investmentManager.getInvestmentsByInvestor(investor.id);
+                let totalInvestedICP = Array.foldLeft<InvestmentTypes.Investment, Nat>(
+                    investorInvestments,
+                    0,
+                    func(acc : Nat, inv : InvestmentTypes.Investment) : Nat {
+                        acc + inv.amount; // amount is stored in ICP e8s
+                    },
+                );
+
+                let ownedNFTs = nftManager.getTokensByOwner(caller);
+
+                let stats = {
+                    totalProjects = investments.size();
+                    totalNFTs = ownedNFTs.size();
+                    averageInvestment = if (investments.size() > 0) {
+                        totalInvestedUSD / investments.size();
+                    } else {
+                        0;
+                    };
+                };
+
+                ?{
+                    investor = investor;
+                    investments = investments;
+                    totalInvestedUSD = totalInvestedUSD;
+                    totalInvestedICP = totalInvestedICP;
+                    portfolioValue = totalInvestedUSD; // For now, same as invested (no appreciation calculated)
+                    ownedNFTs = ownedNFTs;
+                    stats = stats;
+                };
             };
         };
     };
 
-    // Get investment by ID
-    public query func getInvestment(investmentId : Text) : async ?Investment {
-        investmentManager.getInvestment(investmentId);
-    };
+    // ========== Collection Management with Real Supply Updates ==========
 
-    // Get investments by project (founder function)
-    public shared (msg) func getInvestmentsForMyProjects() : async [Investment] {
-        switch (founderManager.getFounderByPrincipal(msg.caller)) {
-            case null { [] };
-            case (?founder) {
-                investmentManager.getInvestmentsByFounder(founder.id);
-            };
-        };
-    };
-
-    // Get total funding raised for a project
-    public query func getTotalFundingForProject(projectId : Text) : async Nat {
-        investmentManager.getTotalFundingForProject(projectId);
-    };
-
-    // Get investor count for a project
-    public query func getInvestorCountForProject(projectId : Text) : async Nat {
-        investmentManager.getInvestorCountForProject(projectId);
-    };
-
-    // =============================================================================
-    // ICP TRANSFER API FUNCTIONS
-    // =============================================================================
-
-    // Transfer ICP (for testing/admin purposes)
-    public shared (_msg) func transferICP(request : ICPTransferRequest) : async TransferResult {
-        // TODO: Add proper authorization check
-        await icpTransferManager.transferICP(request);
-    };
-
-    // Simulate ICP transfer (for testing)
-    public shared (_msg) func simulateICPTransfer(request : ICPTransferRequest) : async TransferResult {
-        await icpTransferManager.simulateTransfer(request);
-    };
-
-    // Get ICP transfer fee
-    public query func getICPTransferFee() : async Nat {
-        icpTransferManager.getTransferFee();
-    };
-
-    // Get account balance
-    public shared (msg) func getMyICPBalance() : async {
-        #ok : Nat;
-        #err : Text;
+    // Get collection with real-time data
+    public query func getCollectionWithStats(collectionId : Text) : async ?{
+        collection : NFTTypes.NFTCollection;
+        remainingSupply : Nat;
+        soldOut : Bool;
+        totalValueUSD : Nat; // Total value of sold NFTs in USD
+        totalValueICP : Nat; // Total value of sold NFTs in ICP
+        averagePriceICP : Nat; // Average ICP price paid per NFT
     } {
-        switch (await icpTransferManager.getAccountBalance(msg.caller)) {
-            case (#ok(balance)) { #ok(balance) };
-            case (#err(error)) { #err(error) };
+        switch (nftManager.getCollection(collectionId)) {
+            case null { null };
+            case (?collection) {
+                let remainingSupply = collection.maxSupply - collection.totalSupply;
+                let soldOut = remainingSupply == 0;
+
+                // Calculate total values
+                let totalValueUSD = collection.pricePerToken * collection.totalSupply;
+                let totalValueICP = icpToken.usdCentsToICPe8s(totalValueUSD);
+
+                let averagePriceICP = if (collection.totalSupply > 0) {
+                    totalValueICP / collection.totalSupply;
+                } else {
+                    icpToken.usdCentsToICPe8s(collection.pricePerToken);
+                };
+
+                ?{
+                    collection = collection;
+                    remainingSupply = remainingSupply;
+                    soldOut = soldOut;
+                    totalValueUSD = totalValueUSD;
+                    totalValueICP = totalValueICP;
+                    averagePriceICP = averagePriceICP;
+                };
+            };
         };
     };
 
-    // =============================================================================
-    // STATISTICS AND ANALYTICS
-    // =============================================================================
+    // ========== Admin Functions ==========
+
+    // Create NFT collection (Admin only)
+    public func createNFTCollection(
+        request : NFTTypes.CreateCollectionRequest,
+        caller : Principal,
+    ) : async NFTTypes.CollectionResult {
+        // In production, add admin role verification here
+        let projectOpt = projectManager.getProject(request.projectId);
+        nftManager.createCollection(request, projectOpt, caller);
+    };
+
+    // Update collection status (Admin only)
+    public func updateCollectionStatus(
+        collectionId : Text,
+        isActive : Bool,
+        caller : Principal,
+    ) : async Result.Result<(), Text> {
+        // In production, add admin role verification here
+        switch (nftManager.getCollection(collectionId)) {
+            case null { #err("Collection not found") };
+            case (?collection) {
+                let updatedCollection : NFTTypes.NFTCollection = {
+                    id = collection.id;
+                    projectId = collection.projectId;
+                    metadata = collection.metadata;
+                    totalSupply = collection.totalSupply;
+                    maxSupply = collection.maxSupply;
+                    pricePerToken = collection.pricePerToken;
+                    createdAt = collection.createdAt;
+                    createdBy = collection.createdBy;
+                    isActive = isActive;
+                };
+
+                // Update collection in storage (you'd need to implement this in NFTService)
+                #ok(());
+            };
+        };
+    };
+
+    // ========== Query Functions ==========
+
+    // Get all active projects with funding info
+    public query func getActiveProjectsWithFunding() : async [{
+        project : ProjectTypes.Project;
+        fundingProgress : Float;
+        availableNFTs : Nat;
+        minInvestmentICP : Nat;
+    }] {
+        let allProjects = projectManager.getAllProjects();
+        let activeProjects = Array.filter<ProjectTypes.Project>(
+            allProjects,
+            func(p : ProjectTypes.Project) : Bool { p.status == #Active },
+        );
+
+        Array.map<ProjectTypes.Project, { project : ProjectTypes.Project; fundingProgress : Float; availableNFTs : Nat; minInvestmentICP : Nat }>(
+            activeProjects,
+            func(project : ProjectTypes.Project) : {
+                project : ProjectTypes.Project;
+                fundingProgress : Float;
+                availableNFTs : Nat;
+                minInvestmentICP : Nat;
+            } {
+                let totalInvestment = investmentManager.getTotalInvestmentByProject(
+                    project.id,
+                    {
+                        icpE8sToUSDCents = icpToken.icpE8sToUSDCents;
+                    },
+                );
+
+                let fundingProgress = if (project.fundingGoal > 0) {
+                    (Float.fromInt(totalInvestment) / Float.fromInt(project.fundingGoal)) * 100.0;
+                } else {
+                    0.0;
+                };
+
+                let collections = nftManager.getCollectionsByProject(project.id);
+                let availableNFTs = Array.foldLeft<NFTTypes.NFTCollection, Nat>(
+                    collections,
+                    0,
+                    func(acc : Nat, collection : NFTTypes.NFTCollection) : Nat {
+                        acc + (collection.maxSupply - collection.totalSupply);
+                    },
+                );
+
+                let minInvestmentICP = icpToken.usdCentsToICPe8s(project.minInvestment);
+
+                {
+                    project = project;
+                    fundingProgress = fundingProgress;
+                    availableNFTs = availableNFTs;
+                    minInvestmentICP = minInvestmentICP;
+                };
+            },
+        );
+    };
 
     // Get platform statistics
     public query func getPlatformStats() : async {
-        totalFounders : Nat;
-        totalInvestors : Nat;
         totalProjects : Nat;
-        totalInvestments : Nat;
-        totalFundingRaised : Nat;
         activeProjects : Nat;
+        totalInvestors : Nat;
+        totalFundingUSD : Nat;
+        totalFundingICP : Nat;
+        totalNFTsSold : Nat;
+        averageInvestmentUSD : Nat;
     } {
+        let allProjects = projectManager.getAllProjects();
+        let activeProjectsCount = Array.filter<ProjectTypes.Project>(
+            allProjects,
+            func(p : ProjectTypes.Project) : Bool { p.status == #Active },
+        ).size();
+
         let investmentStats = investmentManager.getInvestmentStats();
-        let activeProjects = projectManager.getProjectsByStatus(#Active);
+
+        // Calculate total funding
+        let allInvestments = Array.foldLeft<ProjectTypes.Project, Nat>(
+            allProjects,
+            0,
+            func(acc : Nat, project : ProjectTypes.Project) : Nat {
+                acc + investmentManager.getTotalInvestmentByProject(
+                    project.id,
+                    {
+                        icpE8sToUSDCents = icpToken.icpE8sToUSDCents;
+                    },
+                );
+            },
+        );
+
+        let totalFundingICP = icpToken.usdCentsToICPe8s(allInvestments);
+
+        // Calculate total NFTs sold across all collections
+        let allCollections = Array.foldLeft<ProjectTypes.Project, [NFTTypes.NFTCollection]>(
+            allProjects,
+            [],
+            func(acc : [NFTTypes.NFTCollection], project : ProjectTypes.Project) : [NFTTypes.NFTCollection] {
+                let projectCollections = nftManager.getCollectionsByProject(project.id);
+                Array.append(acc, projectCollections);
+            },
+        );
+
+        let totalNFTsSold = Array.foldLeft<NFTTypes.NFTCollection, Nat>(
+            allCollections,
+            0,
+            func(acc : Nat, collection : NFTTypes.NFTCollection) : Nat {
+                acc + collection.totalSupply;
+            },
+        );
+
+        let averageInvestment = if (investmentStats.totalInvestments > 0) {
+            allInvestments / investmentStats.totalInvestments;
+        } else {
+            0;
+        };
 
         {
-            totalFounders = founderManager.getFounderCount();
-            totalInvestors = investorManager.getInvestorCount();
-            totalProjects = projectManager.getProjectCount();
-            totalInvestments = investmentStats.totalInvestments;
-            totalFundingRaised = investmentStats.totalAmount;
-            activeProjects = activeProjects.size();
+            totalProjects = allProjects.size();
+            activeProjects = activeProjectsCount;
+            totalInvestors = investmentStats.totalInvestors;
+            totalFundingUSD = allInvestments;
+            totalFundingICP = totalFundingICP;
+            totalNFTsSold = totalNFTsSold;
+            averageInvestmentUSD = averageInvestment;
         };
     };
 
-    // Get NFT collection statistics
-    public query func getNFTStats() : async NFTTypes.CollectionStats {
-        nftManager.getCollectionStats();
+    // ========== Legacy API Compatibility ==========
+
+    // Legacy project functions
+    public func createProject(request : ProjectTypes.ProjectCreateRequest, caller : Principal) : async ProjectTypes.UpdateResult {
+        // You may need to extract founderId from the request or caller, adjust as needed
+        let founderId : Text = Principal.toText(caller);
+        let result = projectManager.createProject(request, founderId, caller);
+        switch (result) {
+            case (#err(e)) { #err(e) };
+            case (#ok(_project)) { #ok };
+        };
     };
 
-    // Health check
-    public query func healthCheck() : async Text {
-        "Plantify Backend is running! Founders: " # Nat.toText(founderManager.getFounderCount()) #
-        ", Investors: " # Nat.toText(investorManager.getInvestorCount()) #
-        ", Projects: " # Nat.toText(projectManager.getProjectCount()) #
-        ", Investments: " # Nat.toText(investmentManager.getInvestmentStats().totalInvestments);
+    public query func getProject(projectId : Text) : async ?ProjectTypes.Project {
+        projectManager.getProject(projectId);
+    };
+
+    public query func getAllProjects() : async [ProjectTypes.Project] {
+        projectManager.getAllProjects();
+    };
+
+    // Legacy investor functions
+    public func registerInvestor(request : InvestorTypes.InvestorRegistrationRequest, caller : Principal) : async InvestorTypes.RegistrationResult {
+        investorManager.registerInvestor(request, caller);
+    };
+
+    public query func getInvestor(investorId : Text) : async ?InvestorTypes.Investor {
+        investorManager.getInvestor(investorId);
+    };
+
+    // Legacy NFT functions
+    public query func getCollection(collectionId : Text) : async ?NFTTypes.NFTCollection {
+        nftManager.getCollection(collectionId);
+    };
+
+    public query func getToken(tokenId : NFTTypes.TokenId) : async ?NFTTypes.NFTToken {
+        nftManager.getToken(tokenId);
+    };
+
+    public query func getTokensByOwner(owner : Principal) : async [NFTTypes.NFTToken] {
+        nftManager.getTokensByOwner(owner);
+    };
+
+    // ========== System Functions ==========
+
+    system func preupgrade() {
+        Debug.print("Starting preupgrade...");
+    };
+
+    system func postupgrade() {
+        Debug.print("Postupgrade completed");
     };
 };

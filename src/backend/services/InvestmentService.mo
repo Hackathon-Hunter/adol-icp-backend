@@ -1,31 +1,28 @@
-import Time "mo:base/Time";
 import Principal "mo:base/Principal";
+import Text "mo:base/Text";
+import Time "mo:base/Time";
 import Result "mo:base/Result";
 import Nat "mo:base/Nat";
 import Array "mo:base/Array";
+import Int "mo:base/Int";
 import InvestmentTypes "../types/InvestmentTypes";
-import ProjectTypes "../types/ProjectTypes";
 import InvestorTypes "../types/InvestorTypes";
-import FounderTypes "../types/FounderTypes";
+import ProjectTypes "../types/ProjectTypes";
 import NFTTypes "../types/NFTTypes";
+import DummyICPTypes "../types/DummyICPTypes";
 import InvestmentStorage "../storage/InvestmentStorage";
 
 module InvestmentService {
 
     type Investment = InvestmentTypes.Investment;
+    type InvestmentStatus = InvestmentTypes.InvestmentStatus;
     type PurchaseRequest = InvestmentTypes.PurchaseRequest;
     type PurchaseResult = InvestmentTypes.PurchaseResult;
-    type InvestmentStatus = InvestmentTypes.InvestmentStatus;
     type InvestmentSummary = InvestmentTypes.InvestmentSummary;
-    type ICPTransferRequest = InvestmentTypes.ICPTransferRequest;
-    type TransferResult = InvestmentTypes.TransferResult;
-
-    // Dependencies (these would be injected in a real implementation)
-    type Project = ProjectTypes.Project;
-    type Investor = InvestorTypes.Investor;
-    type Founder = FounderTypes.Founder;
-    type NFTCollection = NFTTypes.NFTCollection;
     type TokenId = NFTTypes.TokenId;
+    type Investor = InvestorTypes.Investor;
+    type Project = ProjectTypes.Project;
+    type NFTCollection = NFTTypes.NFTCollection;
 
     public class InvestmentManager() {
 
@@ -40,80 +37,128 @@ module InvestmentService {
             storage.postupgrade(entries);
         };
 
-        // Purchase NFTs from a project
-        public func purchaseNFTs(
+        // Create investment record with ICP payment integration
+        public func createInvestmentWithICP(
             request : PurchaseRequest,
             investor : Investor,
             project : Project,
-            founder : Founder,
             collection : NFTCollection,
-            _callerPrincipal : Principal,
-        ) : async PurchaseResult {
+            nftManager : {
+                purchaseTokensWithICP : (NFTTypes.PurchaseRequest, Principal, Principal) -> Result.Result<{ tokenIds : [TokenId]; paymentDetails : DummyICPTypes.PaymentSuccess; totalSupplyAfter : Nat }, Text>;
+            },
+            projectService : {
+                updateProjectFunding : (Text, Nat) -> Result.Result<(), Text>;
+            },
+        ) : PurchaseResult {
 
-            // Validate purchase request
+            // Validate the purchase request
             switch (validatePurchaseRequest(request, investor, project, collection)) {
                 case (#err(error)) { return #err(error) };
-                case (#ok(())) {};
+                case (#ok()) {};
             };
 
-            // Calculate total cost
-            let totalCost = collection.pricePerToken * request.quantity;
+            // Generate investment ID
+            let investmentId = "inv-" # project.id # "-" # investor.id # "-" # Int.toText(Time.now());
 
-            // Check if payment amount is sufficient
-            if (request.paymentAmount < totalCost) {
-                return #err("Insufficient payment. Required: " # Nat.toText(totalCost) # " ICP");
+            // Calculate total cost in USD cents
+            let totalCostUSD = collection.pricePerToken * request.quantity;
+
+            // Create NFT purchase request
+            let nftPurchaseRequest : NFTTypes.PurchaseRequest = {
+                collectionId = request.collectionId;
+                quantity = request.quantity;
+                paymentAmount = totalCostUSD; // This will be converted to ICP internally
+                useICP = ?true;
             };
 
-            // Create investment record
-            let investmentId = storage.generateInvestmentId();
-            let currentTime = Time.now();
+            // Process the NFT purchase with ICP payment
+            switch (
+                nftManager.purchaseTokensWithICP(
+                    nftPurchaseRequest,
+                    investor.principal,
+                    project.founderPrincipal // Send funds directly to project founder
+                )
+            ) {
+                case (#err(error)) {
+                    return #err("NFT purchase failed: " # error);
+                };
+                case (#ok(purchaseResult)) {
 
+                    // Update project funding with the USD amount
+                    switch (projectService.updateProjectFunding(project.id, totalCostUSD)) {
+                        case (#err(error)) {
+                            // Note: At this point NFTs are already minted and payment processed
+                            // In a production system, you'd want to implement proper rollback
+                            return #err("Project funding update failed: " # error);
+                        };
+                        case (#ok()) {
+
+                            // Create investment record
+                            let newInvestment : Investment = {
+                                id = investmentId;
+                                investorId = investor.id;
+                                investorPrincipal = investor.principal;
+                                projectId = project.id;
+                                founderId = project.founderId;
+                                founderPrincipal = project.founderPrincipal;
+                                collectionId = request.collectionId;
+                                amount = purchaseResult.paymentDetails.amountICP; // Store ICP amount
+                                quantity = request.quantity;
+                                pricePerToken = collection.pricePerToken; // USD price per token
+                                investmentDate = Time.now();
+                                status = #Completed;
+                                transactionHash = ?Int.toText(purchaseResult.paymentDetails.transactionId);
+                                tokenIds = purchaseResult.tokenIds;
+                            };
+
+                            // Store investment
+                            storage.putInvestment(investmentId, newInvestment);
+
+                            #ok(newInvestment);
+                        };
+                    };
+                };
+            };
+        };
+
+        // Legacy purchase function (for backward compatibility)
+        public func purchaseNFT(
+            request : PurchaseRequest,
+            investor : Investor,
+            project : Project,
+            collection : NFTCollection,
+        ) : PurchaseResult {
+
+            // Validate the purchase request
+            switch (validatePurchaseRequest(request, investor, project, collection)) {
+                case (#err(error)) { return #err(error) };
+                case (#ok()) {};
+            };
+
+            // Generate investment ID
+            let investmentId = "inv-" # project.id # "-" # investor.id # "-" # Int.toText(Time.now());
+
+            // Create investment record (simplified version without actual payment processing)
             let newInvestment : Investment = {
                 id = investmentId;
                 investorId = investor.id;
                 investorPrincipal = investor.principal;
                 projectId = project.id;
-                founderId = founder.id;
-                founderPrincipal = founder.principal;
-                collectionId = collection.id;
-                amount = totalCost;
+                founderId = project.founderId;
+                founderPrincipal = project.founderPrincipal;
+                collectionId = request.collectionId;
+                amount = request.paymentAmount; // This should now be in ICP e8s
                 quantity = request.quantity;
                 pricePerToken = collection.pricePerToken;
-                investmentDate = currentTime;
-                status = #Processing;
-                transactionHash = null; // Will be set after transfer
-                tokenIds = []; // Will be set after NFT minting
-            };
-
-            // Store investment
-            storage.putInvestment(investmentId, newInvestment);
-
-            // TODO: In a real implementation, you would:
-            // 1. Transfer ICP from investor to founder
-            // 2. Mint NFTs to investor
-            // 3. Update investment status based on results
-
-            // For this simple implementation, we'll simulate success
-            let updatedInvestment : Investment = {
-                id = newInvestment.id;
-                investorId = newInvestment.investorId;
-                investorPrincipal = newInvestment.investorPrincipal;
-                projectId = newInvestment.projectId;
-                founderId = newInvestment.founderId;
-                founderPrincipal = newInvestment.founderPrincipal;
-                collectionId = newInvestment.collectionId;
-                amount = newInvestment.amount;
-                quantity = newInvestment.quantity;
-                pricePerToken = newInvestment.pricePerToken;
-                investmentDate = newInvestment.investmentDate;
+                investmentDate = Time.now();
                 status = #Completed;
                 transactionHash = ?("simulated-tx-hash-" # investmentId);
                 tokenIds = generateSimulatedTokenIds(request.quantity); // Simulated token IDs
             };
 
-            ignore storage.updateInvestment(investmentId, updatedInvestment);
+            storage.putInvestment(investmentId, newInvestment);
 
-            #ok(updatedInvestment);
+            #ok(newInvestment);
         };
 
         // Validate purchase request
@@ -153,15 +198,31 @@ module InvestmentService {
                 return #err("Not enough NFTs available. Remaining: " # Nat.toText(remainingSupply));
             };
 
-            // Check payment amount
+            // Check payment amount (basic validation)
             if (request.paymentAmount == 0) {
                 return #err("Payment amount must be greater than 0");
+            };
+
+            // Validate minimum investment amount
+            let totalCost = collection.pricePerToken * request.quantity;
+            if (totalCost < project.minInvestment) {
+                return #err("Investment amount below minimum required: $" # Nat.toText(project.minInvestment / 100));
+            };
+
+            // Validate maximum investment amount (if set)
+            switch (project.maxInvestment) {
+                case (?maxInv) {
+                    if (totalCost > maxInv) {
+                        return #err("Investment amount exceeds maximum allowed: $" # Nat.toText(maxInv / 100));
+                    };
+                };
+                case null {};
             };
 
             #ok(());
         };
 
-        // Generate simulated token IDs (in real implementation, this would come from NFT service)
+        // Generate simulated token IDs (for legacy compatibility)
         private func generateSimulatedTokenIds(quantity : Nat) : [TokenId] {
             var tokenIds : [TokenId] = [];
             var i = 0;
@@ -197,28 +258,72 @@ module InvestmentService {
             storage.getInvestmentsByFounder(founderId);
         };
 
-        // Get investment summaries for investor - FIXED: using companyName instead of title
-        public func getInvestmentSummariesForInvestor(investorId : Text, projects : [Project]) : [InvestmentSummary] {
+        // Get investment summaries for investor with current values
+        public func getInvestmentSummariesForInvestor(
+            investorId : Text,
+            projects : [Project],
+            icpToken : {
+                icpE8sToUSDCents : (Nat) -> Nat;
+                getICPToUSDRate : () -> Float;
+            },
+        ) : [InvestmentSummary] {
             let investments = storage.getInvestmentsByInvestor(investorId);
 
             Array.mapFilter<Investment, InvestmentSummary>(
                 investments,
                 func(investment : Investment) : ?InvestmentSummary {
-                    // Find project company name (FIXED: was project.title)
+                    // Find project company name
                     let projectTitle = switch (Array.find<Project>(projects, func(p : Project) : Bool { p.id == investment.projectId })) {
-                        case (?project) { project.companyName }; // FIXED: changed from project.title to project.companyName
+                        case (?project) { project.companyName };
                         case null { "Unknown Project" };
                     };
+
+                    // Calculate current USD value of ICP investment
+                    let currentUSDValue = icpToken.icpE8sToUSDCents(investment.amount);
 
                     ?{
                         id = investment.id;
                         projectTitle = projectTitle;
-                        amount = investment.amount;
+                        amount = investment.amount; // ICP amount in e8s
                         quantity = investment.quantity;
                         investmentDate = investment.investmentDate;
                         status = investment.status;
-                        currentValue = ?investment.amount; // Simplified - same as invested amount
+                        currentValue = ?currentUSDValue; // Current USD value
                     };
+                },
+            );
+        };
+
+        // Get total investment amount by investor (in USD)
+        public func getTotalInvestmentByInvestor(
+            investorId : Text,
+            icpToken : {
+                icpE8sToUSDCents : (Nat) -> Nat;
+            },
+        ) : Nat {
+            let investments = storage.getInvestmentsByInvestor(investorId);
+            Array.foldLeft<Investment, Nat>(
+                investments,
+                0,
+                func(acc : Nat, investment : Investment) : Nat {
+                    acc + icpToken.icpE8sToUSDCents(investment.amount);
+                },
+            );
+        };
+
+        // Get total investment amount by project (in USD)
+        public func getTotalInvestmentByProject(
+            projectId : Text,
+            icpToken : {
+                icpE8sToUSDCents : (Nat) -> Nat;
+            },
+        ) : Nat {
+            let investments = storage.getInvestmentsByProject(projectId);
+            Array.foldLeft<Investment, Nat>(
+                investments,
+                0,
+                func(acc : Nat, investment : Investment) : Nat {
+                    acc + icpToken.icpE8sToUSDCents(investment.amount);
                 },
             );
         };
@@ -226,74 +331,37 @@ module InvestmentService {
         // Get investment statistics
         public func getInvestmentStats() : {
             totalInvestments : Nat;
-            totalAmount : Nat;
-            completedInvestments : Nat;
-            pendingInvestments : Nat;
+            totalInvestors : Nat;
+            totalProjects : Nat;
         } {
             let allInvestments = storage.getAllInvestments();
-            var totalAmount : Nat = 0;
-            var completedCount : Nat = 0;
-            var pendingCount : Nat = 0;
-
-            for (investment in allInvestments.vals()) {
-                switch (investment.status) {
-                    case (#Completed) {
-                        completedCount += 1;
-                        totalAmount += investment.amount;
+            let uniqueInvestors = Array.foldLeft<Investment, [Text]>(
+                allInvestments,
+                [],
+                func(acc : [Text], investment : Investment) : [Text] {
+                    if (Array.find<Text>(acc, func(id : Text) : Bool { id == investment.investorId }) == null) {
+                        Array.append<Text>(acc, [investment.investorId]);
+                    } else {
+                        acc;
                     };
-                    case (#Pending or #Processing) {
-                        pendingCount += 1;
+                },
+            );
+            let uniqueProjects = Array.foldLeft<Investment, [Text]>(
+                allInvestments,
+                [],
+                func(acc : [Text], investment : Investment) : [Text] {
+                    if (Array.find<Text>(acc, func(id : Text) : Bool { id == investment.projectId }) == null) {
+                        Array.append<Text>(acc, [investment.projectId]);
+                    } else {
+                        acc;
                     };
-                    case (_) {};
-                };
-            };
+                },
+            );
 
             {
                 totalInvestments = allInvestments.size();
-                totalAmount = totalAmount;
-                completedInvestments = completedCount;
-                pendingInvestments = pendingCount;
-            };
-        };
-
-        // Get total funding raised for a project
-        public func getTotalFundingForProject(projectId : Text) : Nat {
-            storage.getTotalInvestmentForProject(projectId);
-        };
-
-        // Get investor count for a project
-        public func getInvestorCountForProject(projectId : Text) : Nat {
-            storage.getInvestorCountForProject(projectId);
-        };
-
-        // Update investment status (admin function)
-        public func updateInvestmentStatus(investmentId : Text, newStatus : InvestmentStatus) : Result.Result<(), Text> {
-            switch (storage.getInvestment(investmentId)) {
-                case null { #err("Investment not found") };
-                case (?investment) {
-                    let updatedInvestment : Investment = {
-                        id = investment.id;
-                        investorId = investment.investorId;
-                        investorPrincipal = investment.investorPrincipal;
-                        projectId = investment.projectId;
-                        founderId = investment.founderId;
-                        founderPrincipal = investment.founderPrincipal;
-                        collectionId = investment.collectionId;
-                        amount = investment.amount;
-                        quantity = investment.quantity;
-                        pricePerToken = investment.pricePerToken;
-                        investmentDate = investment.investmentDate;
-                        status = newStatus;
-                        transactionHash = investment.transactionHash;
-                        tokenIds = investment.tokenIds;
-                    };
-
-                    if (storage.updateInvestment(investmentId, updatedInvestment)) {
-                        #ok(());
-                    } else {
-                        #err("Failed to update investment status");
-                    };
-                };
+                totalInvestors = uniqueInvestors.size();
+                totalProjects = uniqueProjects.size();
             };
         };
     };

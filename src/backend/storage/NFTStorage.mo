@@ -12,7 +12,12 @@ module NFTStorage {
     type NFTCollection = NFTTypes.NFTCollection;
     type NFTToken = NFTTypes.NFTToken;
     type TokenId = NFTTypes.TokenId;
-    type OwnerBalance = NFTTypes.OwnerBalance;
+    type OwnerBalance = {
+        owner : Principal;
+        collectionId : Text;
+        tokenIds : [TokenId];
+        totalTokens : Nat;
+    };
 
     public class NFTStore() {
 
