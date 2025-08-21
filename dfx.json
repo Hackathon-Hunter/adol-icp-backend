@@ -1,6 +1,6 @@
 {
   "canisters": {
-    "plantify-backend": {
+    "adol-backend": {
       "main": "src/backend/main.mo",
       "type": "motoko"
     }
