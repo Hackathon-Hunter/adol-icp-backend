@@ -109,6 +109,10 @@ module {
             ProductStorage.getProductsByCategory(storage, categoryId)
         };
         
+        public func getProductsByUser(userId: Principal) : [ProductTypes.Product] {
+            ProductStorage.getProductsByUser(storage, userId)
+        };
+        
         public func validateProductsAndCalculateTotal(
             items: [{ productId: ProductTypes.ProductId; quantity: Nat }]
         ) : Result.Result<{ total: Nat; items: [{ productId: ProductTypes.ProductId; quantity: Nat; price: Nat; totalPrice: Nat }] }, ProductTypes.ProductError> {
