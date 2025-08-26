@@ -70,7 +70,7 @@ module {
             switch (ProductStorage.getProduct(storage, productId)) {
                 case null { #err(#ProductNotFound) };
                 case (?product) {
-                    if (not product.isActive) {
+                    if (product.status != #active) {
                         return #err(#ProductNotFound);
                     };
                     
@@ -105,6 +105,18 @@ module {
             ProductStorage.getActiveProducts(storage)
         };
         
+        public func getDraftProducts() : [ProductTypes.Product] {
+            ProductStorage.getDraftProducts(storage)
+        };
+        
+        public func getSoldProducts() : [ProductTypes.Product] {
+            ProductStorage.getSoldProducts(storage)
+        };
+        
+        public func getProductsByStatus(status: ProductTypes.ProductStatus) : [ProductTypes.Product] {
+            ProductStorage.getProductsByStatus(storage, status)
+        };
+        
         public func getProductsByCategory(categoryId: ProductTypes.CategoryId) : [ProductTypes.Product] {
             ProductStorage.getProductsByCategory(storage, categoryId)
         };
@@ -123,7 +135,7 @@ module {
                 switch (ProductStorage.getProduct(storage, item.productId)) {
                     case null { return #err(#ProductNotFound) };
                     case (?product) {
-                        if (not product.isActive) {
+                        if (product.status != #active) {
                             return #err(#ProductNotFound);
                         };
                         

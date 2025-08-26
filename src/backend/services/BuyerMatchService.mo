@@ -187,7 +187,7 @@ module {
                 score += 0.6;
             };
             
-            if (product.isActive) {
+            if (product.status == #active) {
                 score += 0.4;
             };
             

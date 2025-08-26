@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Helper function to execute dfx commands
+// Helper function to execute dfx commands and return raw output
 function executeDfxCommand(method, args = '') {
     return new Promise((resolve, reject) => {
         const command = `cd ${path.dirname(__dirname)} && dfx canister call adol-backend ${method} ${args} --network ic`;
@@ -21,21 +21,8 @@ function executeDfxCommand(method, args = '') {
                 return;
             }
             
-            try {
-                // Parse the Candid output
-                let result = stdout.trim();
-                
-                // Remove Candid syntax and convert to JSON-like format
-                result = result.replace(/\brecord\s*{/g, '{');
-                result = result.replace(/\bvec\s*{/g, '[');
-                result = result.replace(/=/g, ':');
-                result = result.replace(/;/g, ',');
-                result = result.replace(/,(\s*[}\]])/g, '$1');
-                
-                resolve({ success: true, data: result });
-            } catch (parseError) {
-                resolve({ success: true, data: stdout.trim() });
-            }
+            // Return raw stdout - let the endpoint handle parsing
+            resolve(stdout.trim());
         });
     });
 }
@@ -45,30 +32,31 @@ function executeDfxCommand(method, args = '') {
 // Health check
 app.get('/health', async (req, res) => {
     try {
-        const result = await executeDfxCommand('health');
-        res.json(result);
+        res.json({ success: true, status: 'API wrapper is running', canisterId: 'ujk5g-liaaa-aaaam-aeocq-cai' });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to get health status', details: error });
+        res.status(500).json({ error: 'Failed to get health status', details: error.message });
     }
 });
 
-// Get system info
-app.get('/info', async (req, res) => {
-    try {
-        const result = await executeDfxCommand('getInfo');
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to get system info', details: error });
-    }
-});
-
-// Get all products
+// Get all products - Use HTTP interface directly
 app.get('/products', async (req, res) => {
     try {
-        const result = await executeDfxCommand('getProducts');
-        res.json(result);
+        // Use fetch to call the canister's HTTP interface directly
+        const response = await fetch('https://ujk5g-liaaa-aaaam-aeocq-cai.icp0.io/?canisterId=ujk5g-liaaa-aaaam-aeocq-cai&method=getProducts');
+        const data = await response.text();
+        
+        // Try to parse as JSON first, if it fails return raw data
+        try {
+            const jsonData = JSON.parse(data);
+            res.json(jsonData);
+        } catch {
+            // If direct JSON parsing fails, use dfx command as fallback
+            const result = await executeDfxCommand('getProducts');
+            res.json({ success: true, data: result });
+        }
     } catch (error) {
-        res.status(500).json({ error: 'Failed to get products', details: error });
+        console.error('Error fetching products:', error);
+        res.status(500).json({ error: 'Failed to get products', details: error.message });
     }
 });
 
@@ -76,10 +64,10 @@ app.get('/products', async (req, res) => {
 app.get('/products/:id', async (req, res) => {
     try {
         const productId = req.params.id;
-        const result = await executeDfxCommand('getProduct', `(${productId})`);
-        res.json(result);
+        const result = await executeDfxCommand('getProduct', `("${productId}")`);
+        res.json({ success: true, data: result });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to get product', details: error });
+        res.status(500).json({ error: 'Failed to get product', details: error.message });
     }
 });
 
@@ -87,9 +75,9 @@ app.get('/products/:id', async (req, res) => {
 app.get('/categories', async (req, res) => {
     try {
         const result = await executeDfxCommand('getCategories');
-        res.json(result);
+        res.json({ success: true, data: result });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to get categories', details: error });
+        res.status(500).json({ error: 'Failed to get categories', details: error.message });
     }
 });
 
@@ -98,29 +86,9 @@ app.get('/categories/:id/products', async (req, res) => {
     try {
         const categoryId = req.params.id;
         const result = await executeDfxCommand('getProductsByCategory', `(${categoryId})`);
-        res.json(result);
+        res.json({ success: true, data: result });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to get products by category', details: error });
-    }
-});
-
-// Get payment config
-app.get('/payment/config', async (req, res) => {
-    try {
-        const result = await executeDfxCommand('getPaymentConfig');
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to get payment config', details: error });
-    }
-});
-
-// Get owner ICP account info
-app.get('/payment/owner-account', async (req, res) => {
-    try {
-        const result = await executeDfxCommand('getOwnerICPAccount');
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to get owner account info', details: error });
+        res.status(500).json({ error: 'Failed to get products by category', details: error.message });
     }
 });
 
@@ -135,14 +103,11 @@ app.listen(PORT, () => {
     console.log(`🚀 Adol E-commerce API wrapper running on port ${PORT}`);
     console.log(`📡 Canister ID: ujk5g-liaaa-aaaam-aeocq-cai`);
     console.log(`🌐 Available endpoints:`);
-    console.log(`  GET /health - Check canister health`);
-    console.log(`  GET /info - Get system information`);
+    console.log(`  GET /health - Check API health`);
     console.log(`  GET /products - Get all products`);
     console.log(`  GET /products/:id - Get specific product`);
     console.log(`  GET /categories - Get all categories`);
     console.log(`  GET /categories/:id/products - Get products by category`);
-    console.log(`  GET /payment/config - Get payment configuration`);
-    console.log(`  GET /payment/owner-account - Get owner ICP account info`);
 });
 
 module.exports = app;

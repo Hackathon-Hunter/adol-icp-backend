@@ -12,16 +12,16 @@ module {
     public type ProductStorage = {
         products: HashMap.HashMap<ProductTypes.ProductId, ProductTypes.Product>;
         categories: HashMap.HashMap<ProductTypes.CategoryId, ProductTypes.Category>;
-        categoryProductCounts: HashMap.HashMap<ProductTypes.CategoryId, Nat>; // Track product count per category for SKU generation
         var nextCategoryId: Nat;
+        var nextProductId: Nat; // Track next product ID for simple incremental numbering
     };
     
     public func init() : ProductStorage {
         {
             products = HashMap.HashMap<ProductTypes.ProductId, ProductTypes.Product>(0, Text.equal, Text.hash);
             categories = HashMap.HashMap<ProductTypes.CategoryId, ProductTypes.Category>(0, func(a: Nat, b: Nat) : Bool { a == b }, func(x: Nat) : Nat32 { Nat32.fromNat(x % (2**30)) });
-            categoryProductCounts = HashMap.HashMap<ProductTypes.CategoryId, Nat>(0, func(a: Nat, b: Nat) : Bool { a == b }, func(x: Nat) : Nat32 { Nat32.fromNat(x % (2**30)) });
             var nextCategoryId = 1;
+            var nextProductId = 1; // Start product IDs from 1
         }
     };
     
@@ -68,16 +68,9 @@ module {
                     return #err(#CategoryNotFound);
                 };
                 
-                // Generate SKU-based product ID
-                let currentCount = switch (storage.categoryProductCounts.get(input.categoryId)) {
-                    case null { 0 };
-                    case (?count) { count };
-                };
-                let newCount = currentCount + 1;
-                storage.categoryProductCounts.put(input.categoryId, newCount);
-                
-                // Create SKU: CategoryCode + 3-digit number (e.g., "ELC001")
-                let productId = category.code # formatNumber(newCount);
+                // Generate simple incremental product ID
+                let productId = "product_" # Nat.toText(storage.nextProductId);
+                storage.nextProductId += 1;
                 
                 let product: ProductTypes.Product = {
                     id = productId;
@@ -90,7 +83,7 @@ module {
                     condition = input.condition;
                     imageBase64 = input.imageBase64;
                     stock = input.stock;
-                    isActive = true;
+                    status = switch (input.status) { case (?status) status; case null #draft }; // Default to draft
                     createdAt = Time.now();
                     updatedAt = Time.now();
                     createdBy = createdBy;
@@ -106,16 +99,6 @@ module {
         };
     };
 
-    // Helper function to format number with leading zeros (e.g., 1 -> "001")
-    private func formatNumber(n: Nat) : Text {
-        if (n < 10) {
-            "00" # Nat.toText(n)
-        } else if (n < 100) {
-            "0" # Nat.toText(n)
-        } else {
-            Nat.toText(n)
-        }
-    };
     
     public func getProduct(storage: ProductStorage, productId: ProductTypes.ProductId) : ?ProductTypes.Product {
         storage.products.get(productId)
@@ -159,7 +142,7 @@ module {
                     categoryId = newCategoryId;
                     imageBase64 = switch (update.imageBase64) { case (?img) ?img; case null product.imageBase64 };
                     stock = switch (update.stock) { case (?stock) stock; case null product.stock };
-                    isActive = switch (update.isActive) { case (?active) active; case null product.isActive };
+                    status = switch (update.status) { case (?status) status; case null product.status };
                     updatedAt = Time.now();
                 };
                 
@@ -195,13 +178,31 @@ module {
     
     public func getActiveProducts(storage: ProductStorage) : [ProductTypes.Product] {
         storage.products.vals() 
-        |> Iter.filter(_, func(p: ProductTypes.Product) : Bool { p.isActive })
+        |> Iter.filter(_, func(p: ProductTypes.Product) : Bool { p.status == #active })
+        |> Iter.toArray(_)
+    };
+    
+    public func getDraftProducts(storage: ProductStorage) : [ProductTypes.Product] {
+        storage.products.vals() 
+        |> Iter.filter(_, func(p: ProductTypes.Product) : Bool { p.status == #draft })
+        |> Iter.toArray(_)
+    };
+    
+    public func getSoldProducts(storage: ProductStorage) : [ProductTypes.Product] {
+        storage.products.vals() 
+        |> Iter.filter(_, func(p: ProductTypes.Product) : Bool { p.status == #sold })
+        |> Iter.toArray(_)
+    };
+    
+    public func getProductsByStatus(storage: ProductStorage, status: ProductTypes.ProductStatus) : [ProductTypes.Product] {
+        storage.products.vals() 
+        |> Iter.filter(_, func(p: ProductTypes.Product) : Bool { p.status == status })
         |> Iter.toArray(_)
     };
     
     public func getProductsByCategory(storage: ProductStorage, categoryId: ProductTypes.CategoryId) : [ProductTypes.Product] {
         storage.products.vals()
-        |> Iter.filter(_, func(p: ProductTypes.Product) : Bool { p.categoryId == categoryId and p.isActive })
+        |> Iter.filter(_, func(p: ProductTypes.Product) : Bool { p.categoryId == categoryId and p.status == #active })
         |> Iter.toArray(_)
     };
     

@@ -5,6 +5,13 @@ module {
     public type ProductId = Text;  // Changed from Nat to Text for SKU
     public type CategoryId = Nat;
     
+    // Product status enumeration
+    public type ProductStatus = {
+        #active;    // Product is live and available for purchase
+        #draft;     // Product is saved but not yet published
+        #sold;      // Product has been sold and is no longer available
+    };
+    
     public type Product = {
         id: ProductId;  // Now Text-based SKU
         name: Text;  // item_name
@@ -16,7 +23,7 @@ module {
         condition: Text; // product condition
         imageBase64: ?Text; // Base64 encoded image data (data:image/jpeg;base64,...)
         stock: Nat;
-        isActive: Bool;
+        status: ProductStatus; // Product status: active, draft, or sold
         createdAt: Int;
         updatedAt: Int;
         createdBy: Principal;
@@ -45,6 +52,7 @@ module {
         condition: Text; // product condition
         imageBase64: ?Text; // Base64 encoded image data (data:image/jpeg;base64,...)
         stock: Nat;
+        status: ?ProductStatus; // Optional status - defaults to draft if not specified
         keySellingPoints: [Text]; // key_selling_points
         knownFlaws: Text; // known_flaws
         reasonForSelling: Text; // reason_for_selling
@@ -61,7 +69,7 @@ module {
         condition: ?Text;
         imageBase64: ?Text; // Base64 encoded image data
         stock: ?Nat;
-        isActive: ?Bool;
+        status: ?ProductStatus; // Update product status
         keySellingPoints: ?[Text];
         knownFlaws: ?Text;
         reasonForSelling: ?Text;
